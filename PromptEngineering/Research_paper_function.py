@@ -27,12 +27,13 @@ def generate_short_query(long_prompt):
     query_prompt = f"""Given the following long prompt, generate a concise 5-10 word query that captures the main topic using only important keywords or meaningful phrases directly from the prompt:
 
 Long Prompt: {long_prompt}
-If the Long Prompt is less than 10 words, then just return the Long Prompt only as the short query as it is already short. Do not generate a short query.
 
+If you detect a short form, convert it into the long form before giving the prompt.
 Short Query (5-10 words):"""
 
     # Generate content using the model
     response = model.generate_content(query_prompt)
+    print(response)
     
     # Return the generated short query
     return response.text.strip()

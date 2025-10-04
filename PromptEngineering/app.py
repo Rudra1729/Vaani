@@ -7,6 +7,7 @@ import requests
 import subprocess
 import base64
 import time
+import tempfile
 
 from pathlib import Path
 from flask import (
@@ -17,11 +18,13 @@ from flask_cors import CORS, cross_origin
 from pdf_utils import cleanup_old_pdfs
 
 import fitz  # PyMuPDF
+from elevenlabs import ElevenLabs
 
 from rag import reload_rag_model, get_contextual_definition, chat_with_doc
 from Research_paper_function import generate_short_query
 from Search_Papers_Arvix import search_arxiv_papers
 from pdf_utils import ensure_pdf_loaded, current_pdf_path, model_loading, download_pdf
+from API_KEY import ELEVENLABS_API_KEY
 
 # ─── Flask Setup ───────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -132,7 +135,8 @@ def index():
             "process-selection": "/process-selection",
             "ask": "/ask",
             "update-pdf": "/update-pdf",
-            "log-click": "/log-click"
+            "log-click": "/log-click",
+            "transcribe": "/transcribe"
         }
     })
 
@@ -171,6 +175,76 @@ def log_click():
         logging.info("User clicked on: %s - %s", title, url)
         return jsonify(message="Click logged"), 200
     return jsonify(error="Missing url/title"), 400
+
+@app.route("/transcribe", methods=["POST"])
+@cross_origin()
+def transcribe_audio():
+    try:
+        # Check if audio file is present
+        if 'audio' not in request.files:
+            return jsonify(error="No audio file provided"), 400
+        
+        audio_file = request.files['audio']
+        if audio_file.filename == '':
+            return jsonify(error="No audio file selected"), 400
+        
+        # Save audio file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
+            audio_file.save(temp_file.name)
+            temp_audio_path = temp_file.name
+        
+        try:
+            # Initialize ElevenLabs client
+            client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+            
+            # Transcribe audio using ElevenLabs Speech-to-Text API
+            with open(temp_audio_path, 'rb') as audio_data:
+                transcription = client.speech_to_text.convert(
+                    model_id="scribe_v1",
+                    file=audio_data,
+                    language_code="en",
+                    diarize=False,
+                    timestamps_granularity="word"
+                )
+            
+            # Extract text from transcription
+            transcribed_text = transcription.text if hasattr(transcription, 'text') else str(transcription)
+            
+            # Clean up the transcribed text
+            if transcribed_text:
+                transcribed_text = transcribed_text.strip()
+            
+            logging.info(f"Transcription successful: '{transcribed_text}'")
+            
+            # Check if transcription is empty or too short
+            if not transcribed_text or len(transcribed_text) < 2:
+                return jsonify({
+                    "error": "No clear speech detected. Please try speaking more clearly.",
+                    "text": "",
+                    "language": getattr(transcription, 'language_code', 'en'),
+                    "confidence": getattr(transcription, 'language_probability', 0.0)
+                }), 200
+            
+            return jsonify({
+                "text": transcribed_text,
+                "language": getattr(transcription, 'language_code', 'en'),
+                "confidence": getattr(transcription, 'language_probability', 1.0)
+            }), 200
+            
+        except Exception as e:
+            logging.error(f"ElevenLabs API error: {e}")
+            return jsonify(error=f"Transcription failed: {str(e)}"), 500
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_audio_path)
+            except:
+                pass
+                
+    except Exception as e:
+        logging.error(f"Transcription endpoint error: {e}")
+        return jsonify(error=f"Server error: {str(e)}"), 500
 
 # ─── Startup ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
