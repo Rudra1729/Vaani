@@ -72,24 +72,19 @@ def get_contextual_definition(highlighted_text):
 # Passage: {passage.replace('\n', ' ')}
 # """
 
-    prompt = f"""
-You must return valid Markdown only.
-
-Use section headers on their own lines, then the body on the following lines. 
+    prompt = f""" You must return valid Markdown only.
+Use section headers on their own line, then the body on the next line(s).
 Required sections in this order:
-1. Operational Context
-2. Other Use-cases
+“### Operational Context”, “### Other Use-cases”, “### Caveats”.
+Do not place any prose on the same line as a header. Explain the specific meaning and context of the term '{search_term}' 
+based EXCLUSIVELY on this technical document passage and give a properly structured answer with proper line spacing and framework. Include:
 
-Do not place any prose on the same line as a header. 
-Explain the specific meaning and context of the term '{search_term}' 
-based EXCLUSIVELY on this technical document passage. 
-Give a properly structured answer with clear line spacing and consistent formatting.
+1. Operational context
 
-Formatting Rules:
-- Each section must start with its label in bold (for example, **Operational Context**).
-- Each section must contain a single paragraph of no more than 50 words.
-- Do not use hashtags (#), bullet points, or code blocks.
-- Keep all text in standard Markdown without special characters.
+2. Other Use cases
+
+Give me the answer in a paragraph with two headings 'Operational Context' and 'Other Use-cases'. Each paragraph should not exceed 50 words. It should not have special characters
+like ###.
 
 Passage: {passage.replace('\n', ' ')}
 """
@@ -140,25 +135,11 @@ def chat_with_doc(user_question):
     [[passage]] = results["documents"]
 
     # Chat-style prompt
-    prompt = f"""
-You are a helpful, friendly, and knowledgeable assistant that answers questions based only on the provided technical document.
-
-Guidelines:
-- Write in clear, natural, and conversational English — confident but not overly formal.
-- Never use Markdown symbols such as **, *, _, `, or #.
-- Always write technical names or terms like ToMoBrush in plain text (no bolding or special formatting).
-- Stay factually accurate and grounded strictly in the passage. Do not add external information.
-- Keep explanations concise but insightful — aim for clarity and completeness over brevity.
-- When relevant, include short context or reasoning to make the explanation more understandable.
-
+    prompt = f"""You are a helpful and friendly assistant that answers questions based on the technical document. 
+Answer casually and clearly, but stay factually accurate and refer only to the passage. 
 Here is the passage: {passage.replace('\n', ' ')}
-
 Question: {query}
-
-Answer:
-"""
-
-
+Answer:"""
 
     model = genai.GenerativeModel("gemini-2.5-flash-lite")
     response = model.generate_content(prompt)

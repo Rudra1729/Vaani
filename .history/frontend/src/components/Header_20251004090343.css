@@ -17,49 +17,6 @@
   padding: 1rem 2rem;
 }
 
-
-/* Back button matches teal theme; sits in the header bar */
-.nav-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-right: 12px;               /* space before the logo */
-  padding: 8px 12px;
-  border-radius: 9999px;
-  background: linear-gradient(135deg, #06b6d4, #0891b2);/* teal */
-  color: #ffffff;
-  font-weight: 600;
-  border: 1px solid rgba(14,165,163,0.35);
-  box-shadow: 0 8px 16px rgba(14,165,163,0.20);
-  cursor: pointer;
-  transition: transform 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
-}
-
-.nav-back-btn:hover {
-  background: #0b8f8d;              /* darker teal on hover */
-  transform: translateY(-1px);
-  box-shadow: 0 10px 18px rgba(14,165,163,0.28);
-}
-
-.nav-back-btn:active {
-  background: #0a7e7c;
-  transform: translateY(0);
-}
-
-.nav-back-btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 4px rgba(45,212,191,0.45);
-}
-
-/* Responsive: keep layout tidy on small screens */
-@media (max-width: 640px) {
-  .nav-back-btn {
-    padding: 8px 10px;
-    margin-right: 8px;
-  }
-}
-
-
 .logo {
   display: flex;
   align-items: center;
