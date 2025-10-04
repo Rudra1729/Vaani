@@ -1,29 +1,26 @@
 import React from "react";
 import Header from "./components/Header";
-import MainContent from "./components/MainContent";
-import "./App.css";
+import HomePage from "./pages/HomePage";
 import ResearchPapers from "./components/ResearchPapers";
-import { BrowserRouter ,Routes,Route} from "react-router-dom";
+import PDFViewer from "./components/PDFViewer";
+import "./App.css";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        {/* Define the routes */}
-        <Route path="/" element={<HeaderAndMainContent />} />
-        <Route path="/research" element={<ResearchPapers />} />
-      </Routes>
+      <div className="app">
+        <Header />
+        <main className="main-content">
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/research" element={<ResearchPapers />} />
+            <Route path="/pdf-viewer" element={<PDFViewer />} />
+          </Routes>
+        </main>
+      </div>
     </BrowserRouter>
   );
 }
-
-const HeaderAndMainContent = () => {
-  return (
-    <div className="container">
-      <Header />
-      <MainContent />
-    </div>
-  );
-};
 
 export default App;
