@@ -10,10 +10,12 @@ const PDFViewer = () => {
   const [chatHistory, setChatHistory] = useState([]);
   const [selectedText, setSelectedText] = useState("");
   const [analysis, setAnalysis] = useState("");
+  const [isRendering, setIsRendering] = useState(false);
   
   const containerRef = useRef(null);
   const selectionTimeoutRef = useRef(null);
   const lastSentRef = useRef("");
+  const renderInProgressRef = useRef(false);
 
   // PDF URL from backend
   const pdfUrl = "http://127.0.0.1:5001/pdf";
@@ -37,51 +39,99 @@ const PDFViewer = () => {
       }
     };
 
-    const renderPDF = () => {
+    const renderPDF = async () => {
       const container = containerRef.current;
       if (!container) return;
 
-      // Clear container
-      container.innerHTML = "";
+      // Prevent multiple simultaneous renders
+      if (renderInProgressRef.current) {
+        console.log('PDF render already in progress, skipping...');
+        return;
+      }
 
-      // Use the exact same approach as the working HTML version
-      window.pdfjsLib.getDocument(pdfUrl).promise.then(pdf => {
+      renderInProgressRef.current = true;
+      setIsRendering(true);
+      setError("");
+
+      try {
+        // Clear container
+        container.innerHTML = "";
+
+        // Load PDF document
+        const pdf = await window.pdfjsLib.getDocument(pdfUrl).promise;
         console.log(`PDF loaded: ${pdf.numPages} pages`);
         
+        // Create array to store page elements in correct order
+        const pageElements = new Array(pdf.numPages);
+        let completedPages = 0;
+
+        // Render all pages with proper ordering
         for (let i = 1; i <= pdf.numPages; i++) {
-          pdf.getPage(i).then(page => {
+          try {
+            const page = await pdf.getPage(i);
             const scale = 1.5;
             const viewport = page.getViewport({ scale });
+            
+            // Create page container
             const pageDiv = document.createElement('div');
             pageDiv.className = 'page';
             pageDiv.style.width = viewport.width + 'px';
             pageDiv.style.height = viewport.height + 'px';
-            container.appendChild(pageDiv);
+            pageDiv.setAttribute('data-page-number', i);
 
+            // Create canvas
             const canvas = document.createElement('canvas');
             canvas.width = viewport.width;
             canvas.height = viewport.height;
             pageDiv.appendChild(canvas);
 
-            page.render({ canvasContext: canvas.getContext('2d'), viewport })
-              .promise.then(() => page.getTextContent())
-              .then(textContent => {
-                const textLayer = document.createElement('div');
-                textLayer.className = 'textLayer';
-                pageDiv.appendChild(textLayer);
-                window.pdfjsLib.renderTextLayer({
-                  textContent, 
-                  container: textLayer,
-                  viewport, 
-                  textDivs: []
-                });
+            // Render page to canvas
+            await page.render({ 
+              canvasContext: canvas.getContext('2d'), 
+              viewport 
+            }).promise;
+
+            // Add text layer
+            const textContent = await page.getTextContent();
+            const textLayer = document.createElement('div');
+            textLayer.className = 'textLayer';
+            pageDiv.appendChild(textLayer);
+            
+            window.pdfjsLib.renderTextLayer({
+              textContent, 
+              container: textLayer,
+              viewport, 
+              textDivs: []
+            });
+
+            // Store page element in correct position
+            pageElements[i - 1] = pageDiv;
+            completedPages++;
+
+            // Append pages in order as they complete
+            if (completedPages === pdf.numPages) {
+              // All pages completed, append them in order
+              pageElements.forEach(pageElement => {
+                if (pageElement) {
+                  container.appendChild(pageElement);
+                }
               });
-          });
+              setIsRendering(false);
+            }
+
+          } catch (pageError) {
+            console.error(`Error rendering page ${i}:`, pageError);
+            // Continue with other pages even if one fails
+          }
         }
-      }).catch(error => {
+
+      } catch (error) {
         console.error('PDF load error:', error);
         setError('Failed to load PDF. Please check if the backend server is running.');
-      });
+        setIsRendering(false);
+      } finally {
+        renderInProgressRef.current = false;
+      }
     };
 
     initializePDF();
@@ -227,6 +277,12 @@ const PDFViewer = () => {
               >
                 Retry
               </button>
+            </div>
+          ) : isRendering ? (
+            <div className="pdf-loading">
+              <Loader2 size={48} className="loading-spinner" />
+              <h3>Loading PDF</h3>
+              <p>Rendering pages...</p>
             </div>
           ) : (
             <div ref={containerRef} className="pdf-container" />

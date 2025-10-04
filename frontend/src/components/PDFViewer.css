@@ -367,7 +367,7 @@
   }
   
   .chat-history {
-    flex: 1;
+    flex: 0 0 45%;
     overflow-y: auto;
     margin-bottom: 1rem;
     padding-right: 0.5rem;
@@ -439,7 +439,8 @@
   
   .chat-input-form {
     border-top: 1px solid #e2e8f0;
-    padding-top: 1rem;
+    padding: 1rem 0;
+    margin-top: 260px;
   }
   
   .chat-input-wrapper {
