@@ -44,6 +44,7 @@ const PDFViewer = () => {
   const vadHadSpeechRef = useRef(false);
   const vadSilenceStartRef = useRef(0);
   const [isPostWakeRecording, setIsPostWakeRecording] = useState(false);
+  const postWakeStartPendingRef = useRef(false);
 
   // PDF URL from backend
   const pdfUrl = "http://127.0.0.1:5001/pdf";
@@ -84,6 +85,17 @@ const PDFViewer = () => {
       try {
         // Clear container
         container.innerHTML = "";
+
+        // First check if backend is responding
+        try {
+          const healthCheck = await fetch("http://127.0.0.1:5001/pdf", { method: "HEAD" });
+          if (healthCheck.status === 202) {
+            setError("Backend is still loading the PDF. Please wait a moment and refresh the page.");
+            return;
+          }
+        } catch (healthError) {
+          console.log("Backend health check failed:", healthError);
+        }
 
         // Load PDF document
         const pdf = await window.pdfjsLib.getDocument(pdfUrl).promise;
@@ -155,7 +167,13 @@ const PDFViewer = () => {
 
       } catch (error) {
         console.error('PDF load error:', error);
-        setError('Failed to load PDF. Please check if the backend server is running.');
+        if (error.name === 'InvalidPDFException') {
+          setError('Invalid PDF file. Please check if the backend has a valid PDF loaded.');
+        } else if (error.message.includes('fetch')) {
+          setError('Cannot connect to backend server. Please ensure the server is running on port 5001.');
+        } else {
+          setError('Failed to load PDF. Please check if the backend server is running and has a PDF loaded.');
+        }
         setIsRendering(false);
       } finally {
         renderInProgressRef.current = false;
@@ -340,6 +358,7 @@ const PDFViewer = () => {
       setChatHistory([...newChatHistory, { type: "error", message: "Failed to get answer. Please try again." }]);
     } finally {
       setLoading(false);
+      // Don't reset auto-listen state here - let the question capture restart handle it
     }
   };
 
@@ -407,7 +426,7 @@ const PDFViewer = () => {
   // ─── Always-On Wake Word Listening ("hey vani" / "hey vaani") ───────────────
   const [autoListenEnabled, setAutoListenEnabled] = useState(false);
   const wakeStateRef = useRef({ wakeDetected: false, buffer: "", lastHeardAt: 0 });
-  const [wakePreset, setWakePreset] = useState("hey vaani");
+  const [wakePreset, setWakePreset] = useState("hey vaani"); 
   const [customWake, setCustomWake] = useState("");
 
   const supportsSpeechRecognition = () => {
@@ -432,15 +451,58 @@ const PDFViewer = () => {
     return new RegExp("\\b" + parts.join("\\s+") + "\\b", 'i');
   };
 
+  // More flexible phrase matching for better detection
+  const isWakePhraseDetected = (transcript) => {
+    const lower = normalize(transcript);
+    const wakePhrases = getWakePhrases();
+    
+    // Try exact phrase match first
+    for (const phrase of wakePhrases) {
+      if (lower.includes(phrase)) return true;
+    }
+    
+    // Try word-by-word matching with more tolerance
+    for (const phrase of wakePhrases) {
+      const words = phrase.split(' ').filter(Boolean);
+      const transcriptWords = lower.split(' ').filter(Boolean);
+      
+      // Check if all words from phrase appear in transcript in order
+      let wordIndex = 0;
+      for (const transcriptWord of transcriptWords) {
+        if (wordIndex < words.length && transcriptWord.includes(words[wordIndex])) {
+          wordIndex++;
+        }
+      }
+      if (wordIndex === words.length) return true;
+    }
+    
+    // Try regex matching as fallback
+    const wakeRegexes = getWakeRegexes();
+    return wakeRegexes.some(r => r.test(lower));
+  };
+
   const getWakeRegexes = () => {
     const presets = [];
     if (wakePreset === 'hey vaani') presets.push('hey vaani', 'hey vani');
     if (wakePreset === 'okay vaani') presets.push('okay vaani', 'ok vaani', 'okay vani', 'ok vani');
     if (wakePreset === 'hey research') presets.push('hey research');
+    if (wakePreset === 'hi there') presets.push('hi there', 'hi there', 'hey there');
     if (wakePreset === 'custom' && customWake.trim()) presets.push(customWake.trim());
     // Fallback to default if empty
     if (presets.length === 0) presets.push('hey vaani');
     return presets.map(phraseToRegex);
+  };
+
+  // Returns the raw phrases for simple substring fallback matching
+  const getWakePhrases = () => {
+    const phrases = [];
+    if (wakePreset === 'hey vaani') phrases.push('hey vaani', 'hey vani');
+    if (wakePreset === 'okay vaani') phrases.push('okay vaani', 'ok vaani', 'okay vani', 'ok vani');
+    if (wakePreset === 'hey research') phrases.push('hey research');
+    if (wakePreset === 'hi there') phrases.push('hi there', 'hey there');
+    if (wakePreset === 'custom' && customWake.trim()) phrases.push(customWake.trim());
+    if (phrases.length === 0) phrases.push('hey vaani');
+    return phrases.map(p => normalize(p));
   };
 
   const startAutoListen = () => {
@@ -448,11 +510,13 @@ const PDFViewer = () => {
       setError("Auto-listen not supported in this browser.");
       return;
     }
+    console.log("[Auto-listen] Starting background wake word detection...");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SR();
     recognition.lang = 'en-US';
     recognition.continuous = true;
     recognition.interimResults = true;
+    try { recognition.maxAlternatives = 1; } catch {}
 
     const scheduleSilenceSubmit = (delayMs) => {
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -474,6 +538,7 @@ const PDFViewer = () => {
       if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
       utteranceActiveRef.current = false;
       setIsUtteranceActive(false);
+      setIsPostWakeRecording(false);
     };
 
     const startUtteranceRecognition = () => {
@@ -483,18 +548,26 @@ const PDFViewer = () => {
       rec2.lang = 'en-US';
       rec2.continuous = false; // stop on pause
       rec2.interimResults = true;
+      rec2.maxAlternatives = 3; // Get multiple alternatives for better accuracy
+      try { rec2.serviceURI = 'wss://www.google.com/speech-api/v2/recognize'; } catch {}
       utteranceRecRef.current = rec2;
       utteranceActiveRef.current = true;
       setIsUtteranceActive(true);
+      setIsPostWakeRecording(true);
       utteranceFinalTextRef.current = "";
 
       let latestTranscript = "";
       rec2.onresult = (evt) => {
         let full = "";
         for (let i = evt.resultIndex; i < evt.results.length; i++) {
-          full += evt.results[i][0].transcript;
-          if (evt.results[i].isFinal) {
+          const result = evt.results[i];
+          // Use the best alternative (first one) for now
+          full += result[0].transcript;
+          if (result.isFinal) {
             utteranceFinalTextRef.current = full;
+            console.log("[Question capture] Final result:", full);
+          } else {
+            console.log("[Question capture] Interim:", full);
           }
         }
         latestTranscript = full;
@@ -502,26 +575,70 @@ const PDFViewer = () => {
 
       rec2.onend = async () => {
         const chosen = (utteranceFinalTextRef.current || latestTranscript || "").trim();
+        console.log("[Question capture] Ended with text:", chosen);
         stopUtteranceRecognition();
-        if (chosen) {
+        if (chosen && chosen.length > 2) { // Only submit if we have meaningful text
           wakeStateRef.current.wakeDetected = false;
           wakeStateRef.current.buffer = '';
+          console.log("[Question capture] Submitting question:", chosen);
           try { await submitQuestion(chosen); } catch {}
         } else {
           // No speech captured; just reset wake
+          console.log("[Question capture] No meaningful speech captured, resetting...");
           wakeStateRef.current.wakeDetected = false;
           wakeStateRef.current.buffer = '';
         }
-        if (autoListenEnabled) {
-          try { recognition.start(); } catch {}
+        
+        // Always restart auto-listen after question capture ends
+        console.log("[Auto-listen] Question capture ended, autoListenEnabled:", autoListenEnabled);
+        
+        // Force restart regardless of autoListenEnabled state if we have a recognition object
+        if (recognitionRef.current) {
+          console.log("[Auto-listen] Force restarting after question capture...");
+          // Reset any pending states
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+          speakingActiveRef.current = false;
+          pendingSubmitRef.current = false;
+          
+          // Ensure autoListenEnabled is true for restart
+          if (!autoListenEnabled) {
+            console.log("[Auto-listen] Re-enabling auto-listen for restart");
+            setAutoListenEnabled(true);
+          }
+          
+          setTimeout(() => {
+            try { 
+              if (recognitionRef.current) {
+                recognitionRef.current.start(); 
+                console.log("[Auto-listen] Restarted successfully after question");
+              }
+            } catch (e) {
+              console.log("[Auto-listen] Restart failed:", e);
+              // Try again after a longer delay
+              setTimeout(() => {
+                try { 
+                  if (recognitionRef.current) {
+                    recognitionRef.current.start(); 
+                    console.log("[Auto-listen] Second restart attempt successful");
+                  }
+                } catch (e2) {
+                  console.log("[Auto-listen] Second restart also failed:", e2);
+                }
+              }, 2000);
+            }
+          }, 1000); // Longer delay to ensure clean restart
+        } else {
+          console.log("[Auto-listen] Cannot restart - no recognition object available");
         }
       };
 
-      // Safety cutoff in case the API hangs
+      // Safety cutoff in case the API hangs - increased timeout for better question capture
       if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
       utteranceTimerRef.current = setTimeout(() => {
+        console.log("[Question capture] Timeout reached, stopping...");
         stopUtteranceRecognition();
-      }, 12000);
+      }, 15000);
 
       try { rec2.start(); } catch {}
     };
@@ -530,14 +647,19 @@ const PDFViewer = () => {
       let transcript = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const res = event.results[i];
-        transcript += res[0].transcript;
+        // Ensure a space between segments so word boundary matching is more reliable
+        transcript += (res[0].transcript + ' ');
       }
       const lower = normalize(transcript);
       const now = Date.now();
-      // Check against selected/custom phrases
-      const wakeRegexes = getWakeRegexes();
-      const match = wakeRegexes.map(r => lower.match(r)).find(Boolean);
-      const containsWake = Boolean(match);
+      
+      // Debug: log what we're hearing
+      if (transcript.trim()) {
+        console.log("[Auto-listen] Heard:", transcript.trim());
+      }
+      
+      // Use improved wake phrase detection
+      const containsWake = isWakePhraseDetected(transcript);
 
       // Any audible result updates last heard time
       wakeStateRef.current.lastHeardAt = now;
@@ -547,9 +669,10 @@ const PDFViewer = () => {
         if (containsWake) {
           wakeStateRef.current.wakeDetected = true;
           wakeStartedAtRef.current = now;
-          // Stop base recognition and run a single-utterance capture that ends on silence
+          // Stop base recognition first; start single-utterance mic in onend to avoid conflicts
+          postWakeStartPendingRef.current = true;
           try { recognition.stop(); } catch {}
-          startUtteranceRecognition();
+          console.log('[Wake] Phrase detected:', transcript.trim());
         }
       }
       // Prefer final results as a cue to submit soon
@@ -576,18 +699,52 @@ const PDFViewer = () => {
     };
 
     recognition.onend = () => {
-      // Auto-restart while enabled
+      console.log("[Auto-listen] Base recognition ended, autoListenEnabled:", autoListenEnabled);
+      // If we just detected wake and stopped, start the single-utterance capture now
+      if (postWakeStartPendingRef.current) {
+        postWakeStartPendingRef.current = false;
+        startUtteranceRecognition();
+        return;
+      }
+      // Otherwise, auto-restart while enabled
       if (autoListenEnabled) {
-        try { recognition.start(); } catch {}
+        console.log("[Auto-listen] Base recognition ended, restarting...");
+        setTimeout(() => {
+          try { 
+            if (recognition && autoListenEnabled) {
+              recognition.start(); 
+              console.log("[Auto-listen] Base recognition restarted successfully");
+            }
+          } catch (e) {
+            console.log("[Auto-listen] Base restart failed:", e);
+            // Try again after a longer delay
+            setTimeout(() => {
+              try { 
+                if (recognition && autoListenEnabled) {
+                  recognition.start(); 
+                  console.log("[Auto-listen] Base recognition second restart successful");
+                }
+              } catch (e2) {
+                console.log("[Auto-listen] Base second restart also failed:", e2);
+              }
+            }, 2000);
+          }
+        }, 500);
       }
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
+      console.log("[Auto-listen] Recognition error:", event.error);
       // brief backoff and restart
       if (autoListenEnabled) {
         setTimeout(() => {
-          try { recognition.start(); } catch {}
-        }, 500);
+          try { 
+            recognition.start(); 
+            console.log("[Auto-listen] Restarted after error");
+          } catch (e) {
+            console.log("[Auto-listen] Error restart failed:", e);
+          }
+        }, 1000);
       }
     };
 
@@ -621,6 +778,7 @@ const PDFViewer = () => {
   };
 
   const stopAutoListen = () => {
+    console.log("[Auto-listen] Manually stopping auto-listen");
     setAutoListenEnabled(false);
     try { if (recognitionRef.current) recognitionRef.current.stop(); } catch {}
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -675,12 +833,64 @@ const PDFViewer = () => {
               <AlertCircle size={48} />
               <h3>Error Loading PDF</h3>
               <p>{error}</p>
-              <button 
-                onClick={() => window.location.reload()} 
-                className="retry-btn"
-              >
-                Retry
-              </button>
+              <div className="error-actions">
+                <button 
+                  onClick={() => {
+                    setError("");
+                    setIsRendering(true);
+                    // Re-trigger PDF loading
+                    const container = containerRef.current;
+                    if (container) {
+                      container.innerHTML = "";
+                    }
+                    renderInProgressRef.current = false;
+                    // Re-run the PDF loading logic
+                    setTimeout(() => {
+                      const script = document.createElement('script');
+                      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js';
+                      script.onload = () => {
+                        // Re-run renderPDF
+                        const renderPDF = async () => {
+                          const container = containerRef.current;
+                          if (!container) return;
+                          if (renderInProgressRef.current) return;
+                          renderInProgressRef.current = true;
+                          setIsRendering(true);
+                          setError("");
+                          try {
+                            container.innerHTML = "";
+                            const pdf = await window.pdfjsLib.getDocument(pdfUrl).promise;
+                            console.log(`PDF loaded: ${pdf.numPages} pages`);
+                            // ... rest of the rendering logic would go here
+                            setIsRendering(false);
+                          } catch (error) {
+                            console.error('PDF load error:', error);
+                            setError('Failed to load PDF. Please check if the backend server is running.');
+                            setIsRendering(false);
+                          } finally {
+                            renderInProgressRef.current = false;
+                          }
+                        };
+                        renderPDF();
+                      };
+                      script.onerror = () => {
+                        setError("Failed to load PDF.js library");
+                        setIsRendering(false);
+                      };
+                      document.head.appendChild(script);
+                    }, 100);
+                  }} 
+                  className="retry-btn"
+                >
+                  Retry
+                </button>
+                <button 
+                  onClick={() => window.location.reload()} 
+                  className="retry-btn secondary"
+                >
+                  Reload Page
+                </button>
+              </div>
             </div>
           ) : isRendering ? (
             <div className="pdf-loading">
@@ -803,6 +1013,32 @@ const PDFViewer = () => {
                   {autoListenEnabled ? 'Auto: On' : 'Auto: Off'}
                 </button>
 
+                {autoListenEnabled && (
+                  <button
+                    type="button"
+                    aria-label="Restart auto-listen"
+                    className="chat-restart-btn"
+                    onClick={() => {
+                      console.log("[Auto-listen] Manual restart requested");
+                      if (recognitionRef.current) {
+                        try {
+                          recognitionRef.current.stop();
+                        } catch {}
+                        setTimeout(() => {
+                          try {
+                            recognitionRef.current.start();
+                            console.log("[Auto-listen] Manual restart successful");
+                          } catch (e) {
+                            console.log("[Auto-listen] Manual restart failed:", e);
+                          }
+                        }, 500);
+                      }
+                    }}
+                  >
+                    🔄
+                  </button>
+                )}
+
                 {isRecording && (
                   <div className="listening-indicator">
                     <span className="dot" />
@@ -827,6 +1063,7 @@ const PDFViewer = () => {
                     <option value="hey vaani">Hey Vaani</option>
                     <option value="okay vaani">Okay Vaani</option>
                     <option value="hey research">Hey Research</option>
+                    <option value="hi there">Hi There</option>
                     <option value="custom">Custom…</option>
                   </select>
                   {wakePreset === 'custom' && (
