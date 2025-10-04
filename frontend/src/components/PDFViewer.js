@@ -45,8 +45,29 @@ const PDFViewer = () => {
   const vadSilenceStartRef = useRef(0);
   const [isPostWakeRecording, setIsPostWakeRecording] = useState(false);
 
+  // Podcast Mode (VAD) state and controls
+  const [isPodcastMode, setIsPodcastMode] = useState(false);
+  // Hysteresis thresholds to reduce flicker: higher to start, lower to keep speaking
+  const [vadStartThreshold, setVadStartThreshold] = useState(0.035);
+  const [vadStopThreshold, setVadStopThreshold] = useState(0.02);
+  // Timing tuned to avoid premature stops
+  const [vadMinSpeechMs, setVadMinSpeechMs] = useState(900);
+  const [vadSilenceMs, setVadSilenceMs] = useState(1400);
+  const vadSpeechStartRef = useRef(0);
+  const ttsSuspendRef = useRef(false);
+  const podcastModeRef = useRef(false);
+  const vadRmsEmaRef = useRef(0);
+  // Grace and cooldown windows to avoid chatter
+  const [vadGraceMs, setVadGraceMs] = useState(240); // ignore brief dips right after speech starts
+  const [vadCooldownMs, setVadCooldownMs] = useState(600); // ignore starts shortly after an end
+  const vadLastEndRef = useRef(0);
+  const [vadMaxUtteranceMs, setVadMaxUtteranceMs] = useState(12000);
+
   // PDF URL from backend
   const pdfUrl = "http://127.0.0.1:5001/pdf";
+  const pageNumberToDivRef = useRef(new Map());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
 
   // Initialize PDF.js and render PDF (using the exact working HTML approach)
   useEffect(() => {
@@ -88,6 +109,8 @@ const PDFViewer = () => {
         // Load PDF document
         const pdf = await window.pdfjsLib.getDocument(pdfUrl).promise;
         console.log(`PDF loaded: ${pdf.numPages} pages`);
+        setTotalPages(pdf.numPages);
+        pageNumberToDivRef.current.clear();
         
         // Create array to store page elements in correct order
         const pageElements = new Array(pdf.numPages);
@@ -132,8 +155,9 @@ const PDFViewer = () => {
               textDivs: []
             });
 
-            // Store page element in correct position
+            // Store page element in correct position and map
             pageElements[i - 1] = pageDiv;
+            pageNumberToDivRef.current.set(i, pageDiv);
             completedPages++;
 
             // Append pages in order as they complete
@@ -145,6 +169,9 @@ const PDFViewer = () => {
                 }
               });
               setIsRendering(false);
+              // Scroll to first page after render
+              setCurrentPage(1);
+              try { pageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
             }
 
           } catch (pageError) {
@@ -313,6 +340,178 @@ const PDFViewer = () => {
     }
   };
 
+  // ─── Podcast Mode (VAD) helpers ─────────────────────────────────────────────
+  const computeRms = (buf) => {
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i];
+      sum += v * v;
+    }
+    return Math.sqrt(sum / Math.max(1, buf.length));
+  };
+
+  const startUtteranceRecording = (stream) => {
+    if (!stream) return;
+    if (postWakeRecorderRef.current && postWakeRecorderRef.current.state !== 'inactive') return;
+    const mimeType = getSupportedMimeType();
+    const options = mimeType ? { mimeType } : undefined;
+    const rec = new MediaRecorder(stream, options);
+    postWakeChunksRef.current = [];
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) postWakeChunksRef.current.push(e.data);
+    };
+    rec.onstop = async () => {
+      try {
+        const blob = new Blob(postWakeChunksRef.current, { type: mimeType || 'audio/webm' });
+        await sendAudioForTranscription(blob, mimeType || 'audio/webm');
+      } catch (err) {
+        console.error(err);
+        setError('Failed to process recorded utterance.');
+      }
+      setIsPostWakeRecording(false);
+    };
+    postWakeRecorderRef.current = rec;
+    setIsPostWakeRecording(true);
+    rec.start();
+  };
+
+  const stopUtteranceRecording = () => {
+    try {
+      if (postWakeRecorderRef.current && postWakeRecorderRef.current.state !== 'inactive') {
+        postWakeRecorderRef.current.stop();
+      }
+    } catch {}
+  };
+
+  const startPodcastVAD = async () => {
+    try {
+      // Disable browser SR auto-listen if active to avoid conflicts
+      if (autoListenEnabled) stopAutoListen();
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError('Microphone not supported in this browser.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      postWakeStreamRef.current = stream;
+      podcastModeRef.current = true;
+      setIsPodcastMode(true);
+
+      // Web Audio setup
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      vadAudioCtxRef.current = ctx;
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.04;
+      source.connect(analyser);
+      vadAnalyserRef.current = analyser;
+      vadDataArrayRef.current = new Float32Array(analyser.fftSize);
+      vadHadSpeechRef.current = false;
+      vadSilenceStartRef.current = 0;
+      vadSpeechStartRef.current = 0;
+
+      const loop = () => {
+        if (!podcastModeRef.current || !vadAnalyserRef.current) return;
+        try {
+          vadAnalyserRef.current.getFloatTimeDomainData(vadDataArrayRef.current);
+          const rms = computeRms(vadDataArrayRef.current);
+          // Exponential moving average to stabilize VAD
+          const alpha = 0.2;
+          vadRmsEmaRef.current = alpha * rms + (1 - alpha) * (vadRmsEmaRef.current || rms);
+          const now = performance.now();
+          const speaking = vadHadSpeechRef.current
+            ? vadRmsEmaRef.current >= vadStopThreshold
+            : vadRmsEmaRef.current >= vadStartThreshold;
+
+          if (speaking) {
+            if (!vadHadSpeechRef.current) {
+              // Rate-limit new utterances with cooldown
+              if (vadLastEndRef.current && (now - vadLastEndRef.current) < vadCooldownMs) {
+                // Do not start a new utterance yet
+              } else {
+              vadHadSpeechRef.current = true;
+              vadSpeechStartRef.current = now;
+              vadSilenceStartRef.current = 0;
+              // Start an utterance recorder if not already
+              if (!isPostWakeRecording) startUtteranceRecording(postWakeStreamRef.current);
+              }
+            }
+          } else {
+            if (vadHadSpeechRef.current) {
+              // Grace period: ignore brief dips right after speech begins
+              const sinceStart = now - (vadSpeechStartRef.current || now);
+              if (sinceStart <= vadGraceMs) {
+                // treat as speaking during grace
+                vadSilenceStartRef.current = 0;
+              } else {
+                if (!vadSilenceStartRef.current) vadSilenceStartRef.current = now;
+              }
+              const speechMs = now - (vadSpeechStartRef.current || now);
+              const silenceMs = now - (vadSilenceStartRef.current || now);
+              const hitMax = speechMs >= vadMaxUtteranceMs;
+              if ((silenceMs >= vadSilenceMs && speechMs >= vadMinSpeechMs) || hitMax) {
+                // End utterance
+                vadHadSpeechRef.current = false;
+                vadSilenceStartRef.current = 0;
+                vadSpeechStartRef.current = 0;
+                vadLastEndRef.current = now;
+                stopUtteranceRecording();
+              }
+            }
+          }
+        } catch {}
+        vadRAFRef.current = requestAnimationFrame(loop);
+      };
+      vadRAFRef.current = requestAnimationFrame(loop);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to start Podcast Mode.');
+      await stopPodcastVAD();
+    }
+  };
+
+  const stopPodcastVAD = async () => {
+    podcastModeRef.current = false;
+    setIsPodcastMode(false);
+    try { if (vadRAFRef.current) cancelAnimationFrame(vadRAFRef.current); } catch {}
+    vadRAFRef.current = null;
+    // Stop any active utterance recording
+    stopUtteranceRecording();
+    // Close audio context
+    try { if (vadAudioCtxRef.current) await vadAudioCtxRef.current.close(); } catch {}
+    vadAudioCtxRef.current = null;
+    vadAnalyserRef.current = null;
+    vadDataArrayRef.current = null;
+    // Stop mic tracks
+    try {
+      if (postWakeStreamRef.current) {
+        postWakeStreamRef.current.getTracks().forEach(t => t.stop());
+      }
+    } catch {}
+    postWakeStreamRef.current = null;
+  };
+
+  // Suspend VAD/mic during TTS without turning Podcast Mode off
+  const suspendPodcastVAD = async () => {
+    // Keep Podcast Mode flags as-is (remain enabled)
+    try { if (vadRAFRef.current) cancelAnimationFrame(vadRAFRef.current); } catch {}
+    vadRAFRef.current = null;
+    // Stop any active utterance recording
+    stopUtteranceRecording();
+    // Close audio context
+    try { if (vadAudioCtxRef.current) await vadAudioCtxRef.current.close(); } catch {}
+    vadAudioCtxRef.current = null;
+    vadAnalyserRef.current = null;
+    vadDataArrayRef.current = null;
+    // Stop mic tracks
+    try {
+      if (postWakeStreamRef.current) {
+        postWakeStreamRef.current.getTracks().forEach(t => t.stop());
+      }
+    } catch {}
+    postWakeStreamRef.current = null;
+  };
+
   const submitQuestion = async (questionText) => {
     const trimmed = (questionText || "").trim();
     if (!trimmed) return;
@@ -331,7 +530,37 @@ const PDFViewer = () => {
       });
       const data = await response.json();
       if (data.answer) {
-        setChatHistory([...newChatHistory, { type: "bot", message: data.answer }]);
+        setChatHistory([...newChatHistory, { type: "bot", message: data.answer, page: data.page }]);
+        if (data.page) {
+          // Auto-scroll to cited page
+          scrollToPage(data.page);
+          // If a snippet is provided, attempt to highlight it briefly on the page
+          if (data.snippet) {
+            try {
+              // Try precise span highlighting; if not found, try neighbors and token-based highlighting
+              let ok = highlightBestContext(data.page, data.snippet, trimmed);
+              // If still ambiguous and anchors available, probe anchors to disambiguate
+              if (!ok && Array.isArray(data.anchors) && data.anchors.length) {
+                for (const tri of data.anchors) {
+                  if (highlightSnippetOnPage(data.page, tri)) { ok = true; break; }
+                  if (highlightSnippetOnPage(Number(data.page) - 1, tri)) { scrollToPage(Number(data.page) - 1); ok = true; break; }
+                  if (highlightSnippetOnPage(Number(data.page) + 1, tri)) { scrollToPage(Number(data.page) + 1); ok = true; break; }
+                }
+              }
+              const pageDiv = pageNumberToDivRef.current.get(Number(data.page));
+              if (pageDiv) {
+                const textLayer = pageDiv.querySelector('.textLayer');
+                if (textLayer && !textLayer.querySelector('.pdf-highlight') && !ok) {
+                  const mark = document.createElement('div');
+                  mark.className = 'snippet-flash';
+                  mark.textContent = '';
+                  textLayer.appendChild(mark);
+                  setTimeout(() => { try { textLayer.removeChild(mark); } catch {} }, 1200);
+                }
+              }
+            } catch {}
+          }
+        }
       } else if (data.error) {
         setChatHistory([...newChatHistory, { type: "error", message: data.error }]);
       }
@@ -389,6 +618,11 @@ const PDFViewer = () => {
     try {
       // Stop any ongoing playback and clean old URL
       try { audioRef.current.pause(); } catch {}
+      // In Podcast Mode, suspend mic while TTS plays to avoid feedback
+      if (isPodcastMode) {
+        ttsSuspendRef.current = true;
+        try { await suspendPodcastVAD(); } catch {}
+      }
       if (currentAudioUrlRef.current) {
         try { URL.revokeObjectURL(currentAudioUrlRef.current); } catch {}
         currentAudioUrlRef.current = null;
@@ -398,6 +632,13 @@ const PDFViewer = () => {
       const url = `http://127.0.0.1:5001/tts?` + new URLSearchParams({ text });
       // Set src directly for progressive playback
       audioRef.current.src = url;
+      // When playback ends, resume Podcast Mode if it was active
+      audioRef.current.onended = async () => {
+        if (isPodcastMode && ttsSuspendRef.current) {
+          ttsSuspendRef.current = false;
+          try { await startPodcastVAD(); } catch {}
+        }
+      };
       await audioRef.current.play().catch(() => {});
     } catch (e) {
       console.error("Failed to play ElevenLabs TTS:", e);
@@ -441,6 +682,168 @@ const PDFViewer = () => {
     // Fallback to default if empty
     if (presets.length === 0) presets.push('hey vaani');
     return presets.map(phraseToRegex);
+  };
+
+  // Scroll helper to bring a given page into view
+  const scrollToPage = (pageNum) => {
+    if (!pageNum) return;
+    const num = Number(pageNum);
+    if (!num || Number.isNaN(num)) return;
+    const div = pageNumberToDivRef.current.get(num);
+    if (div) {
+      try { div.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+      setCurrentPage(num);
+    }
+  };
+
+  // Highlight snippet text on a given page by matching spans in the text layer
+  // Build a searchable index for a textLayer
+  const buildSpanIndex = (textLayer) => {
+    const spans = Array.from(textLayer.querySelectorAll('span'));
+    const lowerTexts = spans.map(s => (s.textContent || '').toLowerCase());
+    const joined = lowerTexts.join(' ');
+    const starts = [];
+    let cur = 0;
+    for (let i = 0; i < lowerTexts.length; i++) {
+      starts.push(cur);
+      cur += lowerTexts[i].length + (i === lowerTexts.length - 1 ? 0 : 1);
+    }
+    return { spans, lowerTexts, joined, starts };
+  };
+
+  const selectSpansForRange = (index, startIdx, endIdx) => {
+    const selected = [];
+    for (let i = 0; i < index.spans.length; i++) {
+      const sStart = index.starts[i];
+      const sEnd = sStart + index.lowerTexts[i].length;
+      const overlap = Math.max(0, Math.min(sEnd, endIdx) - Math.max(sStart, startIdx));
+      if (overlap >= Math.min(6, index.lowerTexts[i].length)) {
+        selected.push(index.spans[i]);
+      }
+    }
+    return selected;
+  };
+
+  const highlightSnippetOnPage = (pageNum, snippet) => {
+    const num = Number(pageNum);
+    if (!num || !snippet) return;
+    const pageDiv = pageNumberToDivRef.current.get(num);
+    if (!pageDiv) return;
+    const textLayer = pageDiv.querySelector('.textLayer');
+    if (!textLayer) return;
+    const target = (snippet || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!target) return false;
+    try {
+      const index = buildSpanIndex(textLayer);
+      const maxLen = Math.min(target.length, 220);
+      const searchStr = target.slice(0, maxLen);
+      const idx = index.joined.indexOf(searchStr);
+      // Clear previous highlights
+      index.spans.forEach(s => s.classList.remove('pdf-highlight'));
+      if (idx === -1) return false;
+      const endIdx = idx + searchStr.length;
+      const selectedSpans = selectSpansForRange(index, idx, endIdx);
+      if (!selectedSpans.length) return false;
+      selectedSpans.forEach(s => s.classList.add('pdf-highlight'));
+      // Auto-clear after a few seconds
+      setTimeout(() => index.spans.forEach(s => s.classList.remove('pdf-highlight')), 4000);
+
+      // Draw bounding boxes around union of selected spans
+      if (selectedSpans.length) {
+        const overlay = ensureBoxOverlay(pageDiv);
+        drawBoundingBox(overlay, selectedSpans);
+      }
+      return true;
+    } catch {}
+    return false;
+  };
+
+  const highlightByTokens = (pageNum, query) => {
+    const num = Number(pageNum);
+    if (!num || !query) return false;
+    const pageDiv = pageNumberToDivRef.current.get(num);
+    if (!pageDiv) return false;
+    const textLayer = pageDiv.querySelector('.textLayer');
+    if (!textLayer) return false;
+    const tokens = (query.toLowerCase().match(/[a-z0-9]{3,}/g) || []).slice(0, 6);
+    if (!tokens.length) return false;
+    const spans = Array.from(textLayer.querySelectorAll('span'));
+    spans.forEach(s => s.classList.remove('pdf-highlight'));
+    let count = 0;
+    const selectedSpans = [];
+    for (const s of spans) {
+      const t = (s.textContent || '').toLowerCase();
+      if (tokens.some(tok => t.includes(tok))) {
+        s.classList.add('pdf-highlight');
+        count++;
+        selectedSpans.push(s);
+      }
+      if (count > 60) break; // safety cap
+    }
+    if (count > 0) {
+      setTimeout(() => spans.forEach(s => s.classList.remove('pdf-highlight')), 4000);
+      const overlay = ensureBoxOverlay(pageDiv);
+      drawBoundingBox(overlay, selectedSpans);
+      return true;
+    }
+    return false;
+  };
+
+  const highlightBestContext = (page, snippet, query) => {
+    // Try stated page
+    if (highlightSnippetOnPage(page, snippet)) return true;
+    // Try neighbors with snippet
+    if (highlightSnippetOnPage(Number(page) - 1, snippet)) {
+      scrollToPage(Number(page) - 1);
+      return true;
+    }
+    if (highlightSnippetOnPage(Number(page) + 1, snippet)) {
+      scrollToPage(Number(page) + 1);
+      return true;
+    }
+    // Token fallback on page and neighbors
+    if (highlightByTokens(page, query)) return true;
+    if (highlightByTokens(Number(page) - 1, query)) {
+      scrollToPage(Number(page) - 1);
+      return true;
+    }
+    if (highlightByTokens(Number(page) + 1, query)) {
+      scrollToPage(Number(page) + 1);
+      return true;
+    }
+    return false;
+  };
+
+  // Ensure a positioned overlay div for drawing boxes exists on a page
+  const ensureBoxOverlay = (pageDiv) => {
+    let overlay = pageDiv.querySelector('.box-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'box-overlay';
+      pageDiv.appendChild(overlay);
+    }
+    // Clear previous boxes
+    Array.from(overlay.querySelectorAll('.pdf-box')).forEach(el => el.remove());
+    return overlay;
+  };
+
+  // Draw a single bounding box around the union rect of selected spans
+  const drawBoundingBox = (overlay, spans) => {
+    if (!overlay || !spans || !spans.length) return;
+    const rects = spans.map(s => s.getBoundingClientRect());
+    const overlayRect = overlay.getBoundingClientRect();
+    const minLeft = Math.min(...rects.map(r => r.left));
+    const minTop = Math.min(...rects.map(r => r.top));
+    const maxRight = Math.max(...rects.map(r => r.right));
+    const maxBottom = Math.max(...rects.map(r => r.bottom));
+    const box = document.createElement('div');
+    box.className = 'pdf-box';
+    box.style.left = `${minLeft - overlayRect.left}px`;
+    box.style.top = `${minTop - overlayRect.top}px`;
+    box.style.width = `${maxRight - minLeft}px`;
+    box.style.height = `${maxBottom - minTop}px`;
+    overlay.appendChild(box);
+    setTimeout(() => { try { box.remove(); } catch {} }, 4200);
   };
 
   const startAutoListen = () => {
@@ -670,6 +1073,33 @@ const PDFViewer = () => {
       <div className="pdf-viewer-main">
         {/* PDF Display - using exact same structure as working HTML */}
         <div className="pdf-display" onMouseUp={handleTextSelection}>
+          <div className="page-nav">
+            <button
+              type="button"
+              className="page-btn"
+              onClick={() => {
+                const prev = Math.max(1, currentPage - 1);
+                setCurrentPage(prev);
+                const div = pageNumberToDivRef.current.get(prev);
+                if (div) try { div.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+              }}
+            >
+              ←
+            </button>
+            <span className="page-info-small">Page {currentPage} / {totalPages}</span>
+            <button
+              type="button"
+              className="page-btn"
+              onClick={() => {
+                const next = Math.min(totalPages || currentPage, currentPage + 1);
+                setCurrentPage(next);
+                const div = pageNumberToDivRef.current.get(next);
+                if (div) try { div.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+              }}
+            >
+              →
+            </button>
+          </div>
           {error ? (
             <div className="pdf-error">
               <AlertCircle size={48} />
@@ -796,11 +1226,11 @@ const PDFViewer = () => {
 
                 <button
                   type="button"
-                  aria-label={autoListenEnabled ? "Disable auto-listen" : "Enable auto-listen"}
-                  className={`chat-auto-btn ${autoListenEnabled ? 'enabled' : ''}`}
-                  onClick={() => (autoListenEnabled ? stopAutoListen() : startAutoListen())}
+                  aria-label={isPodcastMode ? "Disable Podcast Mode" : "Enable Podcast Mode"}
+                  className={`podcast-btn ${isPodcastMode ? 'enabled' : ''}`}
+                  onClick={() => (isPodcastMode ? stopPodcastVAD() : startPodcastVAD())}
                 >
-                  {autoListenEnabled ? 'Auto: On' : 'Auto: Off'}
+                  {isPodcastMode ? 'Podcast: On' : 'Podcast: Off'}
                 </button>
 
                 {isRecording && (
@@ -815,30 +1245,6 @@ const PDFViewer = () => {
                     Recording question…
                   </div>
                 )}
-
-                <div className="wake-select">
-                  <label className="wake-label" htmlFor="wake-preset">Wake</label>
-                  <select
-                    id="wake-preset"
-                    className="wake-select-input"
-                    value={wakePreset}
-                    onChange={(e) => setWakePreset(e.target.value)}
-                  >
-                    <option value="hey vaani">Hey Vaani</option>
-                    <option value="okay vaani">Okay Vaani</option>
-                    <option value="hey research">Hey Research</option>
-                    <option value="custom">Custom…</option>
-                  </select>
-                  {wakePreset === 'custom' && (
-                    <input
-                      type="text"
-                      className="wake-custom-input"
-                      placeholder="Type your wake phrase"
-                      value={customWake}
-                      onChange={(e) => setCustomWake(e.target.value)}
-                    />
-                  )}
-                </div>
               </div>
               
               <form onSubmit={handleChatSubmit} className="chat-input-form">
