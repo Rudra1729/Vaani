@@ -27,10 +27,16 @@ const SearchBar = () => {
   };
 
   const handleSearch = async (searchQuery = null) => {
-    const queryToUse = searchQuery || searchTerm;
+    // Normalize incoming query to a string before trimming
+    const raw = (searchQuery !== null && searchQuery !== undefined) ? searchQuery : searchTerm;
+    const queryToUse = (typeof raw === 'string'
+      ? raw
+      : (raw && typeof raw.text === 'string'
+        ? raw.text
+        : String(raw || '')));
     console.log("Searching with query:", queryToUse);
-    
-    if (!queryToUse.trim()) {
+
+    if (!queryToUse || !queryToUse.trim()) {
       setError("Please enter a search term");
       return;
     }
