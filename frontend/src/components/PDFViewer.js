@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { MessageSquare, FileText, Send, Loader2, AlertCircle } from "lucide-react";
+import { MessageSquare, FileText, Send, Loader2, AlertCircle, Mic, Square } from "lucide-react";
 import "./PDFViewer.css";
 
 const PDFViewer = () => {
@@ -11,11 +11,39 @@ const PDFViewer = () => {
   const [selectedText, setSelectedText] = useState("");
   const [analysis, setAnalysis] = useState("");
   const [isRendering, setIsRendering] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   
   const containerRef = useRef(null);
   const selectionTimeoutRef = useRef(null);
   const lastSentRef = useRef("");
   const renderInProgressRef = useRef(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const currentStreamRef = useRef(null);
+  const audioRef = useRef(null);
+  const currentAudioUrlRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const inactivityIntervalRef = useRef(null);
+  const speakingActiveRef = useRef(false);
+  const wakeStartedAtRef = useRef(0);
+  const pendingSubmitRef = useRef(false);
+  const utteranceRecRef = useRef(null);
+  const utteranceTimerRef = useRef(null);
+  const utteranceActiveRef = useRef(false);
+  const utteranceFinalTextRef = useRef("");
+  const [isUtteranceActive, setIsUtteranceActive] = useState(false);
+  const postWakeActiveRef = useRef(false);
+  const postWakeStreamRef = useRef(null);
+  const postWakeRecorderRef = useRef(null);
+  const postWakeChunksRef = useRef([]);
+  const vadAudioCtxRef = useRef(null);
+  const vadAnalyserRef = useRef(null);
+  const vadDataArrayRef = useRef(null);
+  const vadRAFRef = useRef(null);
+  const vadHadSpeechRef = useRef(false);
+  const vadSilenceStartRef = useRef(0);
+  const [isPostWakeRecording, setIsPostWakeRecording] = useState(false);
 
   // PDF URL from backend
   const pdfUrl = "http://127.0.0.1:5001/pdf";
@@ -186,16 +214,111 @@ const PDFViewer = () => {
     }
   };
 
-  const handleChatSubmit = async (e) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
+  // Voice recording helpers
+  const getSupportedMimeType = () => {
+    const types = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/ogg",
+      "audio/mp4",
+      "audio/mpeg"
+    ];
+    for (const t of types) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) {
+        return t;
+      }
+    }
+    return "audio/webm";
+  };
 
-    const userMessage = chatInput.trim();
-    setChatInput("");
-    
-    // Add user message to chat history
-    const newChatHistory = [...chatHistory, { type: "user", message: userMessage }];
+  const startRecording = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError("Microphone not supported in this browser.");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      currentStreamRef.current = stream;
+      const mimeType = getSupportedMimeType();
+      const options = mimeType ? { mimeType } : undefined;
+      const recorder = new MediaRecorder(stream, options);
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        try {
+          const blob = new Blob(audioChunksRef.current, { type: mimeType });
+          await sendAudioForTranscription(blob, mimeType);
+        } catch (err) {
+          console.error(err);
+          setError("Failed to process recording.");
+        } finally {
+          if (currentStreamRef.current) {
+            currentStreamRef.current.getTracks().forEach(t => t.stop());
+            currentStreamRef.current = null;
+          }
+        }
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error(err);
+      setError("Microphone permission denied or unavailable.");
+    }
+  };
+
+  const stopRecording = () => {
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {}
+    setIsRecording(false);
+  };
+
+  const sendAudioForTranscription = async (blob, mimeType) => {
+    setLoading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : mimeType.includes("mpeg") ? "mp3" : "wav";
+      form.append("audio", blob, `recording.${ext}`);
+
+      const res = await fetch("http://127.0.0.1:5001/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (data && data.text) {
+        // Auto-ask the transcribed question
+        await submitQuestion(data.text);
+      } else if (data && data.error) {
+        setError(data.error);
+      } else {
+        setError("Transcription failed. Try again.");
+      }
+    } catch (e) {
+      console.error(e);
+      setError("Failed to send audio for transcription.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitQuestion = async (questionText) => {
+    const trimmed = (questionText || "").trim();
+    if (!trimmed) return;
+    const newChatHistory = [...chatHistory, { type: "user", message: trimmed }];
     setChatHistory(newChatHistory);
+    setChatInput("");
 
     setLoading(true);
     try {
@@ -204,9 +327,8 @@ const PDFViewer = () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ question: userMessage }),
+        body: JSON.stringify({ question: trimmed }),
       });
-
       const data = await response.json();
       if (data.answer) {
         setChatHistory([...newChatHistory, { type: "bot", message: data.answer }]);
@@ -221,10 +343,292 @@ const PDFViewer = () => {
     }
   };
 
+  const handleChatSubmit = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    const userMessage = chatInput.trim();
+    await submitQuestion(userMessage);
+  };
+
   const formatAnalysis = (text) => {
     return text
       .replace(/\*\*Operational Context\*\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Operational Context</h4>')
       .replace(/\*\*Other Use-cases\*\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Other Use-cases</h4>');
+  };
+
+  // Initialize audio element for ElevenLabs playback
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+      audioRef.current.preload = 'auto';
+    }
+    return () => {
+      try {
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        if (currentAudioUrlRef.current) {
+          URL.revokeObjectURL(currentAudioUrlRef.current);
+          currentAudioUrlRef.current = null;
+        }
+      } catch {}
+    };
+  }, []);
+
+  // Auto-play ElevenLabs TTS for the latest bot reply
+  useEffect(() => {
+    const last = chatHistory[chatHistory.length - 1];
+    if (last && last.type === "bot" && last.message) {
+      playElevenLabs(last.message);
+    }
+  }, [chatHistory]);
+
+  const playElevenLabs = async (text) => {
+    if (!text || !audioRef.current) return;
+    try {
+      // Stop any ongoing playback and clean old URL
+      try { audioRef.current.pause(); } catch {}
+      if (currentAudioUrlRef.current) {
+        try { URL.revokeObjectURL(currentAudioUrlRef.current); } catch {}
+        currentAudioUrlRef.current = null;
+      }
+
+      // Stream via GET to allow faster start (browser can stream progressively)
+      const url = `http://127.0.0.1:5001/tts?` + new URLSearchParams({ text });
+      // Set src directly for progressive playback
+      audioRef.current.src = url;
+      await audioRef.current.play().catch(() => {});
+    } catch (e) {
+      console.error("Failed to play ElevenLabs TTS:", e);
+    }
+  };
+
+  // ─── Always-On Wake Word Listening ("hey vani" / "hey vaani") ───────────────
+  const [autoListenEnabled, setAutoListenEnabled] = useState(false);
+  const wakeStateRef = useRef({ wakeDetected: false, buffer: "", lastHeardAt: 0 });
+  const [wakePreset, setWakePreset] = useState("hey vaani");
+  const [customWake, setCustomWake] = useState("");
+
+  const supportsSpeechRecognition = () => {
+    return typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  };
+
+  const normalize = (s) => (s || "").toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Convert a phrase like "hey vaani" into a tolerant regex allowing repeated vowels and small variations
+  const phraseToRegex = (phrase) => {
+    const words = normalize(phrase).split(' ').filter(Boolean);
+    const parts = words.map(w => {
+      // allow repeated vowels and minor variations for the wake name
+      const flexible = w
+        .replace(/a/g, 'a+')
+        .replace(/e/g, 'e+')
+        .replace(/i/g, 'i+')
+        .replace(/o/g, 'o+')
+        .replace(/u/g, 'u+');
+      return flexible;
+    });
+    return new RegExp("\\b" + parts.join("\\s+") + "\\b", 'i');
+  };
+
+  const getWakeRegexes = () => {
+    const presets = [];
+    if (wakePreset === 'hey vaani') presets.push('hey vaani', 'hey vani');
+    if (wakePreset === 'okay vaani') presets.push('okay vaani', 'ok vaani', 'okay vani', 'ok vani');
+    if (wakePreset === 'hey research') presets.push('hey research');
+    if (wakePreset === 'custom' && customWake.trim()) presets.push(customWake.trim());
+    // Fallback to default if empty
+    if (presets.length === 0) presets.push('hey vaani');
+    return presets.map(phraseToRegex);
+  };
+
+  const startAutoListen = () => {
+    if (!supportsSpeechRecognition()) {
+      setError("Auto-listen not supported in this browser.");
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    const scheduleSilenceSubmit = (delayMs) => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(async () => {
+        if (!wakeStateRef.current.wakeDetected || !wakeStateRef.current.buffer) return;
+        if (pendingSubmitRef.current) return;
+        pendingSubmitRef.current = true;
+        const toAsk = wakeStateRef.current.buffer.trim();
+        wakeStateRef.current.wakeDetected = false;
+        wakeStateRef.current.buffer = "";
+        try { await submitQuestion(toAsk); } catch {}
+        pendingSubmitRef.current = false;
+      }, Math.max(0, delayMs || 0));
+    };
+
+    // Single-utterance recognition helpers
+    const stopUtteranceRecognition = () => {
+      try { if (utteranceRecRef.current) utteranceRecRef.current.stop(); } catch {}
+      if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+      utteranceActiveRef.current = false;
+      setIsUtteranceActive(false);
+    };
+
+    const startUtteranceRecognition = () => {
+      if (utteranceActiveRef.current) return;
+      const SR2 = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec2 = new SR2();
+      rec2.lang = 'en-US';
+      rec2.continuous = false; // stop on pause
+      rec2.interimResults = true;
+      utteranceRecRef.current = rec2;
+      utteranceActiveRef.current = true;
+      setIsUtteranceActive(true);
+      utteranceFinalTextRef.current = "";
+
+      let latestTranscript = "";
+      rec2.onresult = (evt) => {
+        let full = "";
+        for (let i = evt.resultIndex; i < evt.results.length; i++) {
+          full += evt.results[i][0].transcript;
+          if (evt.results[i].isFinal) {
+            utteranceFinalTextRef.current = full;
+          }
+        }
+        latestTranscript = full;
+      };
+
+      rec2.onend = async () => {
+        const chosen = (utteranceFinalTextRef.current || latestTranscript || "").trim();
+        stopUtteranceRecognition();
+        if (chosen) {
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+          try { await submitQuestion(chosen); } catch {}
+        } else {
+          // No speech captured; just reset wake
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+        }
+        if (autoListenEnabled) {
+          try { recognition.start(); } catch {}
+        }
+      };
+
+      // Safety cutoff in case the API hangs
+      if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+      utteranceTimerRef.current = setTimeout(() => {
+        stopUtteranceRecognition();
+      }, 12000);
+
+      try { rec2.start(); } catch {}
+    };
+
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        transcript += res[0].transcript;
+      }
+      const lower = normalize(transcript);
+      const now = Date.now();
+      // Check against selected/custom phrases
+      const wakeRegexes = getWakeRegexes();
+      const match = wakeRegexes.map(r => lower.match(r)).find(Boolean);
+      const containsWake = Boolean(match);
+
+      // Any audible result updates last heard time
+      wakeStateRef.current.lastHeardAt = now;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+
+      if (!wakeStateRef.current.wakeDetected) {
+        if (containsWake) {
+          wakeStateRef.current.wakeDetected = true;
+          wakeStartedAtRef.current = now;
+          // Stop base recognition and run a single-utterance capture that ends on silence
+          try { recognition.stop(); } catch {}
+          startUtteranceRecognition();
+        }
+      }
+      // Prefer final results as a cue to submit soon
+      const hasFinal = Array.from(event.results).some(r => r.isFinal);
+      // No-op: single-utterance capture handles submission
+    };
+
+    recognition.onspeechstart = () => {
+      speakingActiveRef.current = true;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
+
+    recognition.onspeechend = () => {
+      speakingActiveRef.current = false;
+      // handled by single-utterance capture
+    };
+
+    recognition.onsoundend = () => {
+      // handled by single-utterance capture
+    };
+
+    recognition.onaudioend = () => {
+      // handled by single-utterance capture
+    };
+
+    recognition.onend = () => {
+      // Auto-restart while enabled
+      if (autoListenEnabled) {
+        try { recognition.start(); } catch {}
+      }
+    };
+
+    recognition.onerror = () => {
+      // brief backoff and restart
+      if (autoListenEnabled) {
+        setTimeout(() => {
+          try { recognition.start(); } catch {}
+        }, 500);
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try { recognition.start(); } catch {}
+    setAutoListenEnabled(true);
+
+    // Fallback inactivity checker: if we haven't heard anything for 1.2s after wake, submit
+    if (inactivityIntervalRef.current) clearInterval(inactivityIntervalRef.current);
+    inactivityIntervalRef.current = setInterval(() => {
+      if (!autoListenEnabled) return;
+      const nowTs = Date.now();
+      // If single-utterance capture isn't active and wake detected, fallback submit on inactivity
+      if (wakeStateRef.current.wakeDetected && !utteranceActiveRef.current) {
+        if (nowTs - (wakeStateRef.current.lastHeardAt || 0) > 1500 && !pendingSubmitRef.current) {
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          pendingSubmitRef.current = true;
+          const toAsk = (wakeStateRef.current.buffer || '').trim();
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+          submitQuestion(toAsk).finally(() => { pendingSubmitRef.current = false; });
+        }
+      }
+      // Safety cutoff: if wake active for too long without input, reset
+      if (wakeStartedAtRef.current && nowTs - wakeStartedAtRef.current > 15000) {
+        wakeStateRef.current.wakeDetected = false;
+        wakeStateRef.current.buffer = '';
+        wakeStartedAtRef.current = 0;
+      }
+    }, 400);
+  };
+
+  const stopAutoListen = () => {
+    setAutoListenEnabled(false);
+    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch {}
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (inactivityIntervalRef.current) clearInterval(inactivityIntervalRef.current);
+    wakeStateRef.current = { wakeDetected: false, buffer: "", lastHeardAt: 0 };
+    speakingActiveRef.current = false;
+    pendingSubmitRef.current = false;
+    wakeStartedAtRef.current = 0;
   };
 
   // Add event listeners for text selection (same as working HTML version)
@@ -377,6 +781,64 @@ const PDFViewer = () => {
                     <span>AI is thinking...</span>
                   </div>
                 )}
+              </div>
+
+              <div className="chat-controls-row">
+                <button
+                  type="button"
+                  aria-label={isRecording ? "Stop recording" : "Start recording"}
+                  className={`chat-mic-btn ${isRecording ? 'recording' : ''}`}
+                  disabled={loading}
+                  onClick={() => (isRecording ? stopRecording() : startRecording())}
+                >
+                  {isRecording ? <Square size={16} /> : <Mic size={16} />}
+                </button>
+
+                <button
+                  type="button"
+                  aria-label={autoListenEnabled ? "Disable auto-listen" : "Enable auto-listen"}
+                  className={`chat-auto-btn ${autoListenEnabled ? 'enabled' : ''}`}
+                  onClick={() => (autoListenEnabled ? stopAutoListen() : startAutoListen())}
+                >
+                  {autoListenEnabled ? 'Auto: On' : 'Auto: Off'}
+                </button>
+
+                {isRecording && (
+                  <div className="listening-indicator">
+                    <span className="dot" />
+                    Listening...
+                  </div>
+                )}
+                {isPostWakeRecording && (
+                  <div className="listening-indicator" style={{ color: '#10b981' }}>
+                    <span className="dot" style={{ background: '#10b981' }} />
+                    Recording question…
+                  </div>
+                )}
+
+                <div className="wake-select">
+                  <label className="wake-label" htmlFor="wake-preset">Wake</label>
+                  <select
+                    id="wake-preset"
+                    className="wake-select-input"
+                    value={wakePreset}
+                    onChange={(e) => setWakePreset(e.target.value)}
+                  >
+                    <option value="hey vaani">Hey Vaani</option>
+                    <option value="okay vaani">Okay Vaani</option>
+                    <option value="hey research">Hey Research</option>
+                    <option value="custom">Custom…</option>
+                  </select>
+                  {wakePreset === 'custom' && (
+                    <input
+                      type="text"
+                      className="wake-custom-input"
+                      placeholder="Type your wake phrase"
+                      value={customWake}
+                      onChange={(e) => setCustomWake(e.target.value)}
+                    />
+                  )}
+                </div>
               </div>
               
               <form onSubmit={handleChatSubmit} className="chat-input-form">

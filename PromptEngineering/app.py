@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from flask import (
     Flask, render_template_string, jsonify, request,
-    abort, url_for, send_file
+    abort, url_for, send_file, Response
 )
 from flask_cors import CORS, cross_origin
 from pdf_utils import cleanup_old_pdfs
@@ -25,6 +25,7 @@ from Research_paper_function import generate_short_query
 from Search_Papers_Arvix import search_arxiv_papers
 from pdf_utils import ensure_pdf_loaded, current_pdf_path, model_loading, download_pdf
 from API_KEY import ELEVENLABS_API_KEY
+from werkzeug.utils import secure_filename
 
 # ─── Flask Setup ───────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -136,7 +137,8 @@ def index():
             "ask": "/ask",
             "update-pdf": "/update-pdf",
             "log-click": "/log-click",
-            "transcribe": "/transcribe"
+            "transcribe": "/transcribe",
+            "tts": "/tts"
         }
     })
 
@@ -188,8 +190,15 @@ def transcribe_audio():
         if audio_file.filename == '':
             return jsonify(error="No audio file selected"), 400
         
-        # Save audio file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
+        # Determine safe filename and extension (accept common audio types)
+        safe_name = secure_filename(audio_file.filename or 'audio')
+        _, ext = os.path.splitext(safe_name)
+        # Default to .wav if extension missing or suspiciously long
+        if not ext or len(ext) > 5:
+            ext = '.wav'
+
+        # Save audio file temporarily with preserved/derived extension
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
             audio_file.save(temp_file.name)
             temp_audio_path = temp_file.name
         
@@ -244,6 +253,56 @@ def transcribe_audio():
                 
     except Exception as e:
         logging.error(f"Transcription endpoint error: {e}")
+        return jsonify(error=f"Server error: {str(e)}"), 500
+
+@app.route("/tts", methods=["POST", "GET"])
+@cross_origin()
+def synthesize_tts():
+    try:
+        if request.method == 'GET':
+            text = (request.args.get('text') or '').strip()
+            voice_id = (request.args.get('voice_id') or
+                        os.environ.get("ELEVENLABS_VOICE_ID") or
+                        "21m00Tcm4TlvDq8ikWAM")
+            model_id = (request.args.get('model_id') or 'eleven_multilingual_v2')
+        else:
+            data = request.get_json(silent=True) or {}
+            text = (data.get('text') or '').strip()
+            voice_id = (data.get('voice_id') or
+                        os.environ.get("ELEVENLABS_VOICE_ID") or
+                        "21m00Tcm4TlvDq8ikWAM")  # Default: Rachel
+            model_id = (data.get('model_id') or 'eleven_multilingual_v2')
+
+        if not text:
+            return jsonify(error="Missing 'text'"), 400
+
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+
+        try:
+            audio_stream = client.text_to_speech.convert(
+                voice_id=voice_id,
+                model_id=model_id,
+                text=text,
+                # lower bitrate for faster start/playback
+                output_format="mp3_22050_32",
+            )
+
+            def generate():
+                for chunk in audio_stream:
+                    yield chunk
+
+            headers = {
+                "Cache-Control": "no-store",
+                "X-Voice-Id": voice_id,
+            }
+            return Response(generate(), mimetype="audio/mpeg", headers=headers)
+
+        except Exception as e:
+            logging.error(f"ElevenLabs TTS error: {e}")
+            return jsonify(error=f"TTS failed: {str(e)}"), 500
+
+    except Exception as e:
+        logging.error(f"TTS endpoint error: {e}")
         return jsonify(error=f"Server error: {str(e)}"), 500
 
 # ─── Startup ──────────────────────────────────────────────────────────────────

@@ -437,10 +437,130 @@
     font-style: italic;
   }
   
+  .chat-controls-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.25rem 0.5rem 0.25rem;
+  }
+
+  .chat-mic-btn,
+  .chat-tts-btn,
+  .chat-auto-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #374151;
+    padding: 0.5rem 0.6rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.1s ease, border-color 0.2s ease;
+  }
+
+  .chat-mic-btn:hover,
+  .chat-tts-btn:hover {
+    background: #f8fafc;
+  }
+
+  .chat-mic-btn.recording {
+    border-color: #ef4444;
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+
+  .chat-tts-btn.enabled {
+    border-color: #10b981;
+    background: #ecfdf5;
+    color: #065f46;
+  }
+
+  .chat-auto-btn.enabled {
+    border-color: #10b981;
+    background: #ecfdf5;
+    color: #065f46;
+  }
+
+  .tts-label {
+    font-size: 0.8rem;
+  }
+
+  .voice-select-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+  }
+
+  .voice-select-label {
+    font-size: 0.8rem;
+    color: #6b7280;
+  }
+
+  .chat-voice-select {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 0.4rem 0.5rem;
+    background: #fff;
+    color: #374151;
+  }
+
+  .listening-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #ef4444;
+    margin-left: 0.5rem;
+    font-weight: 600;
+  }
+
+  .listening-indicator .dot {
+    width: 8px;
+    height: 8px;
+    background: #ef4444;
+    border-radius: 9999px;
+    display: inline-block;
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1); }
+  }
+
   .chat-input-form {
     border-top: 1px solid #e2e8f0;
     padding: 1rem 0;
     margin-top: 260px;
+  }
+
+  .wake-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+  }
+
+  .wake-label {
+    font-size: 0.8rem;
+    color: #6b7280;
+  }
+
+  .wake-select-input {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 0.4rem 0.5rem;
+    background: #fff;
+    color: #374151;
+  }
+
+  .wake-custom-input {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 0.4rem 0.5rem;
+    background: #fff;
+    color: #374151;
   }
   
   .chat-input-wrapper {
