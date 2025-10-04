@@ -140,25 +140,11 @@ def chat_with_doc(user_question):
     [[passage]] = results["documents"]
 
     # Chat-style prompt
-    prompt = f"""
-You are a helpful, friendly, and knowledgeable assistant that answers questions based only on the provided technical document.
-
-Guidelines:
-- Write in clear, natural, and conversational English — confident but not overly formal.
-- Never use Markdown symbols such as **, *, _, `, or #.
-- Always write technical names or terms like ToMoBrush in plain text (no bolding or special formatting).
-- Stay factually accurate and grounded strictly in the passage. Do not add external information.
-- Keep explanations concise but insightful — aim for clarity and completeness over brevity.
-- When relevant, include short context or reasoning to make the explanation more understandable.
-
+    prompt = f"""You are a helpful and friendly assistant that answers questions based on the technical document. 
+Answer casually and clearly, but stay factually accurate and refer only to the passage. 
 Here is the passage: {passage.replace('\n', ' ')}
-
 Question: {query}
-
-Answer:
-"""
-
-
+Answer:"""
 
     model = genai.GenerativeModel("gemini-2.5-flash-lite")
     response = model.generate_content(prompt)
