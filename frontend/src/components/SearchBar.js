@@ -27,7 +27,8 @@ const SearchBar = () => {
   };
 
   const handleSearch = async (searchQuery = null) => {
-    const queryToUse = searchQuery || searchTerm;
+    const queryCandidate = typeof searchQuery === 'string' ? searchQuery : searchTerm;
+    const queryToUse = (queryCandidate || '').toString();
     console.log("Searching with query:", queryToUse);
     
     if (!queryToUse.trim()) {
