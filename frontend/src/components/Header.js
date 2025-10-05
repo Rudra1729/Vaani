@@ -64,10 +64,12 @@ import React, { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BookOpen, Search, FileText, ArrowLeft } from "lucide-react";
 import "./Header.css";
+import { useLanguage } from "../lang/LanguageContext";
 
 const Header = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { language, setLanguage, t } = useLanguage();
 
   // Keyboard shortcut: Alt + ArrowLeft → go back
   useEffect(() => {
@@ -94,8 +96,8 @@ const Header = () => {
             aria-label="Go back"
             onClick={() => navigate(-1)}
           >
-            <ArrowLeft size={18} />
-            <span>Back</span>
+          <ArrowLeft size={18} />
+          <span>{t('app.back')}</span>
           </button>
         )}
 
@@ -112,16 +114,28 @@ const Header = () => {
             className={`nav-link ${location.pathname === "/" ? "active" : ""}`}
           >
             <Search size={18} />
-            Search
+            {t('nav.search')}
           </Link>
           <Link
             to="/research"
             className={`nav-link ${location.pathname === "/research" ? "active" : ""}`}
           >
             <FileText size={18} />
-            Papers
+            {t('nav.papers')}
           </Link>
         </nav>
+
+        {/* Language Toggle */}
+        <div className="nav">
+          <button
+            type="button"
+            className="nav-link"
+            onClick={() => setLanguage(language === 'hi' ? 'en' : 'hi')}
+            aria-label="Toggle language"
+          >
+            {language === 'hi' ? t('lang.english') : t('lang.hindi')}
+          </button>
+        </div>
       </div>
     </header>
   );

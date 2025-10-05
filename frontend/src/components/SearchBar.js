@@ -2,8 +2,10 @@ import React, { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Loader2, Mic, MicOff, Square } from "lucide-react";
 import "./SearchBar.css";
+import { useLanguage } from "../lang/LanguageContext";
 
 const SearchBar = () => {
+  const { t, language } = useLanguage();
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -36,8 +38,8 @@ const SearchBar = () => {
         : String(raw || '')));
     console.log("Searching with query:", queryToUse);
 
-    if (!queryToUse || !queryToUse.trim()) {
-      setError("Please enter a search term");
+      if (!queryToUse || !queryToUse.trim()) {
+      setError(t('search.noTerm'));
       return;
     }
 
@@ -60,11 +62,11 @@ const SearchBar = () => {
         localStorage.setItem("searchResult", JSON.stringify(data.results));
         navigate("/research");
       } else {
-        setError("No papers found for your search. Try different keywords.");
+        setError(t('search.noResults'));
       }
     } catch (error) {
       console.error("Error searching papers:", error);
-      setError("Failed to search papers. Please try again.");
+      setError(t('search.fail'));
     } finally {
       setIsLoading(false);
     }
@@ -153,8 +155,8 @@ const SearchBar = () => {
   return (
     <div className="search-container">
       <div className="search-header">
-        <h2>Discover Research Papers</h2>
-        <p>Find and analyze academic papers with AI-powered insights</p>
+        <h2>{t('search.heading')}</h2>
+        <p>{t('search.subheading')}</p>
       </div>
       
       <div className="search-input-container">
@@ -162,7 +164,7 @@ const SearchBar = () => {
           <Search className="search-icon" size={20} />
           <input
             type="text"
-            placeholder="Enter your research topic or question..."
+            placeholder={t('search.placeholder')}
             value={searchTerm}
             onChange={handleInputChange}
             onKeyPress={handleKeyPress}
@@ -190,15 +192,15 @@ const SearchBar = () => {
           {isLoading ? (
             <>
               <Loader2 className="loading-icon" size={18} />
-              Searching...
+              {t('search.loading')}
             </>
           ) : isTranscribing ? (
             <>
               <Loader2 className="loading-icon" size={18} />
-              Transcribing...
+              {t('search.transcribing')}
             </>
           ) : (
-            "Search Papers"
+            t('search.button')
           )}
         </button>
       </div>
@@ -217,7 +219,7 @@ const SearchBar = () => {
       )}
       
       <div className="search-suggestions">
-        <p>Popular searches:</p>
+        <p>{t('search.popular')}</p>
         <div className="suggestion-tags">
           <button 
             className="suggestion-tag"

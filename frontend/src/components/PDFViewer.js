@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
-import { MessageSquare, FileText, Send, Loader2, AlertCircle, Mic, Square } from "lucide-react";
+import { MessageSquare, FileText, Send, Loader2, AlertCircle, Mic, Square, Share2 } from "lucide-react";
 import "./PDFViewer.css";
+import { useLanguage } from "../lang/LanguageContext";
 
 const PDFViewer = () => {
   const [activeTab, setActiveTab] = useState("analysis");
@@ -12,6 +13,11 @@ const PDFViewer = () => {
   const [analysis, setAnalysis] = useState("");
   const [isRendering, setIsRendering] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [mindmapMd, setMindmapMd] = useState("");
+  const [mindmapSummary, setMindmapSummary] = useState("");
+  const [mindmapLoading, setMindmapLoading] = useState(false);
+  const [mindmapError, setMindmapError] = useState("");
+  const [graphData, setGraphData] = useState(null);
   
   const containerRef = useRef(null);
   const selectionTimeoutRef = useRef(null);
@@ -37,6 +43,7 @@ const PDFViewer = () => {
   const postWakeStreamRef = useRef(null);
   const postWakeRecorderRef = useRef(null);
   const postWakeChunksRef = useRef([]);
+  const podcastStartingRef = useRef(false);
   const vadAudioCtxRef = useRef(null);
   const vadAnalyserRef = useRef(null);
   const vadDataArrayRef = useRef(null);
@@ -49,22 +56,23 @@ const PDFViewer = () => {
   const [isPodcastMode, setIsPodcastMode] = useState(false);
   const [isPodcastHindiMode, setIsPodcastHindiMode] = useState(false);
   // Hysteresis thresholds to reduce flicker: higher to start, lower to keep speaking
-  const [vadStartThreshold, setVadStartThreshold] = useState(0.035);
-  const [vadStopThreshold, setVadStopThreshold] = useState(0.02);
-  // Timing tuned to avoid premature stops
-  const [vadMinSpeechMs, setVadMinSpeechMs] = useState(900);
-  const [vadSilenceMs, setVadSilenceMs] = useState(1400);
+  const [vadStartThreshold, setVadStartThreshold] = useState(0.02);
+  const [vadStopThreshold, setVadStopThreshold] = useState(0.01);
+  // Timing tuned to avoid premature stops (allow longer pauses and longer utterances)
+  const [vadMinSpeechMs, setVadMinSpeechMs] = useState(800);
+  const [vadSilenceMs, setVadSilenceMs] = useState(2600);
   const vadSpeechStartRef = useRef(0);
   const ttsSuspendRef = useRef(false);
   const podcastModeRef = useRef(false);
   const podcastHindiModeRef = useRef(false);
   const vadRmsEmaRef = useRef(0);
   // Grace and cooldown windows to avoid chatter
-  const [vadGraceMs, setVadGraceMs] = useState(240); // ignore brief dips right after speech starts
-  const [vadCooldownMs, setVadCooldownMs] = useState(600); // ignore starts shortly after an end
+  const [vadGraceMs, setVadGraceMs] = useState(600); // ignore brief dips right after speech starts
+  const [vadCooldownMs, setVadCooldownMs] = useState(1000); // ignore starts shortly after an end
   const vadLastEndRef = useRef(0);
-  const [vadMaxUtteranceMs, setVadMaxUtteranceMs] = useState(12000);
+  const [vadMaxUtteranceMs, setVadMaxUtteranceMs] = useState(20000);
 
+  const { t, language } = useLanguage();
   // PDF URL from backend
   const pdfUrl = "http://127.0.0.1:5001/pdf";
   const pageNumberToDivRef = useRef(new Map());
@@ -219,7 +227,9 @@ const PDFViewer = () => {
     lastSentRef.current = text;
     setLoading(true);
     setError("");
-    
+    // Also generate mindmap for selection in parallel
+    try { sendSelectionForMindmap(text); } catch {}
+
     try {
       const response = await fetch("http://127.0.0.1:5001/process-selection", {
         method: "POST",
@@ -242,6 +252,194 @@ const PDFViewer = () => {
       setLoading(false);
     }
   };
+
+  const sendSelectionForMindmap = async (text) => {
+    try {
+      setMindmapLoading(true);
+      setMindmapError("");
+      const res = await fetch("http://127.0.0.1:5001/mindmap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      if (data && (data.mindmap_md || data.summary)) {
+        setMindmapMd(data.mindmap_md || "");
+        setMindmapSummary(data.summary || "");
+        setGraphData(data.graph || null);
+      } else if (data && data.error) {
+        setMindmapError(data.error);
+      } else {
+        setMindmapError("Failed to generate mind map.");
+      }
+    } catch (e) {
+      setMindmapError("Mind map generation failed. Try again.");
+    } finally {
+      setMindmapLoading(false);
+    }
+  };
+
+  const buildMindmapHtml = (md) => {
+    const safeMd = (md || "- Mindmap\n  - No content");
+    return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>
+html,body{height:100%;margin:0;background:#0b1220;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+#mind{width:100%;height:100vh}
+.summary{padding:10px 14px;background:#0f172a;border-bottom:1px solid #1f2a44;color:#cbd5e1}
+code,pre{color:inherit}
+</style>
+<script src=\"https://cdn.jsdelivr.net/npm/d3@7\"></script>
+<script src=\"https://cdn.jsdelivr.net/npm/markmap-view@0.16.1\"></script>
+<script src=\"https://cdn.jsdelivr.net/npm/markmap-lib@0.16.1/dist/browser/index.min.js\"></script></head>
+<body>
+<div id=\"mind\"></div>
+<script>
+  const md = ${JSON.stringify(safeMd)};
+  window.addEventListener('DOMContentLoaded', () => {
+    try {
+      const { Transformer, Markmap } = window.markmap;
+      const transformer = new Transformer();
+      const { root } = transformer.transform(md);
+      Markmap.create('#mind', undefined, root);
+    } catch (e) {
+      const el = document.getElementById('mind');
+      if (el) {
+        el.style.whiteSpace = 'pre-wrap';
+        el.style.padding = '16px';
+        el.textContent = md;
+      }
+    }
+  });
+</script>
+</body></html>`;
+  };
+
+  const buildForceGraphHtml = (graph) => {
+    const dataJson = JSON.stringify(graph || { nodes: [], links: [] });
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+html,body{height:100%;margin:0;background:#0b1220;color:#fff}
+#wrap{position:relative;width:100%;height:100vh}
+#graph{width:100%;height:100vh}
+.label{font:12px system-ui;pointer-events:none;fill:#e5e7eb}
+.hud{position:absolute;top:12px;right:12px;display:flex;gap:8px;z-index:10}
+.hud button{background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:8px;padding:6px 10px;cursor:pointer}
+.hud button:hover{background:#1f2937}
+</style></head><body>
+<div id="wrap">
+  <svg id="graph"></svg>
+  <div class="hud">
+    <button id="zoomIn">Zoom +</button>
+    <button id="zoomOut">Zoom -</button>
+    <button id="reset">Reset</button>
+    <button id="fs">Fullscreen</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>
+const data=${dataJson};
+const svg=d3.select('#graph');
+const width=window.innerWidth,height=window.innerHeight;
+svg.attr('viewBox',[0,0,width,height]);
+
+// Zoom/Pan behavior
+const zoom = d3.zoom().scaleExtent([0.2, 3]).on('zoom', (event)=>{
+  g.attr('transform', event.transform);
+});
+svg.call(zoom);
+
+// Root group
+const g = svg.append('g');
+
+// Compute degree map for sizing
+const degree = {};
+for (const n of data.nodes) degree[n.id] = 0;
+for (const l of data.links) {
+  const s = (typeof l.source === 'object') ? l.source.id : l.source;
+  const t = (typeof l.target === 'object') ? l.target.id : l.target;
+  if (s != null) degree[s] = (degree[s]||0) + 1;
+  if (t != null) degree[t] = (degree[t]||0) + 1;
+}
+
+function nodeRadius(d){
+  const deg = degree[d.id] || 0;
+  const depth = (d.group || 0);
+  const base = 8;
+  const byDegree = Math.sqrt(deg + 1) * 4;
+  const byDepth = Math.max(0, 3 - depth) * 2;
+  return base + byDegree + byDepth;
+}
+
+function shortLabel(d){
+  const raw = (d.label || d.id || '').trim();
+  if (!raw) return d.id;
+  const words = raw.split(/\s+/).slice(0,3).join(' ');
+  return words.length > 28 ? words.slice(0,28) + '…' : words;
+}
+
+const link=g.append('g').attr('stroke','#394a6b').attr('stroke-opacity',0.7).selectAll('line').data(data.links).join('line').attr('stroke-width',d=>Math.sqrt(d.value||1));
+const node=g.append('g').selectAll('g').data(data.nodes).join('g');
+const simulation=d3.forceSimulation(data.nodes)
+  .force('link', d3.forceLink(data.links).id(d=>d.id).distance(120).strength(0.8))
+  .force('charge', d3.forceManyBody().strength(-220))
+  .force('center', d3.forceCenter(width/2,height/2))
+  .on('tick',()=>{
+    link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+    node.attr('transform',d=>'translate(' + d.x + ',' + d.y + ')');
+  });
+node.append('circle').attr('r',d=>nodeRadius(d)).attr('fill',d=>d3.schemeTableau10[(d.group||0)%10]).call(drag(simulation));
+node.append('text').attr('class','label').attr('x',12).attr('y',4).text(d=>shortLabel(d));
+node.append('title').text(d=>d.label || d.id);
+function drag(sim){
+  function dragstarted(event){if(!event.active) sim.alphaTarget(0.3).restart(); event.subject.fx=event.subject.x; event.subject.fy=event.subject.y;}
+  function dragged(event){event.subject.fx=event.x; event.subject.fy=event.y;}
+  function dragended(event){if(!event.active) sim.alphaTarget(0); event.subject.fx=null; event.subject.fy=null;}
+  return d3.drag().on('start',dragstarted).on('drag',dragged).on('end',dragended);
+}
+
+// HUD controls
+document.getElementById('zoomIn').onclick = () => svg.transition().call(zoom.scaleBy, 1.2);
+document.getElementById('zoomOut').onclick = () => svg.transition().call(zoom.scaleBy, 0.8);
+document.getElementById('reset').onclick = () => svg.transition().call(zoom.transform, d3.zoomIdentity);
+document.getElementById('fs').onclick = () => {
+  const wrap = document.getElementById('wrap');
+  if (!document.fullscreenElement) wrap.requestFullscreen().catch(()=>{}); else document.exitFullscreen().catch(()=>{});
+};
+</script>
+</body></html>`;
+  };
+
+  // Auto-generate a full-paper mind map when the Visualization tab opens
+  useEffect(() => {
+    const run = async () => {
+      if (activeTab !== 'viz') return;
+      // Skip if we already generated and no selection change
+      if (mindmapMd || mindmapLoading) return;
+      try {
+        setMindmapLoading(true);
+        setMindmapError("");
+        const res = await fetch("http://127.0.0.1:5001/mindmap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scope: 'document' })
+        });
+        const data = await res.json();
+        if (data && (data.mindmap_md || data.summary)) {
+          setMindmapMd(data.mindmap_md || "");
+          setMindmapSummary(data.summary || "");
+          setGraphData(data.graph || null);
+        } else if (data && data.error) {
+          setMindmapError(data.error);
+        } else {
+          setMindmapError("Failed to generate full-paper mind map.");
+        }
+      } catch (e) {
+        setMindmapError("Mind map generation failed. Try again.");
+      } finally {
+        setMindmapLoading(false);
+      }
+    };
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   // Voice recording helpers
   const getSupportedMimeType = () => {
@@ -393,6 +591,11 @@ const PDFViewer = () => {
     rec.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) postWakeChunksRef.current.push(e.data);
     };
+    rec.onerror = () => {
+      try { rec.stop(); } catch {}
+      setIsPostWakeRecording(false);
+      try { postWakeRecorderRef.current = null; } catch {}
+    };
     rec.onstop = async () => {
       try {
         const blob = new Blob(postWakeChunksRef.current, { type: mimeType || 'audio/webm' });
@@ -406,6 +609,7 @@ const PDFViewer = () => {
         setError('Failed to process recorded utterance.');
       }
       setIsPostWakeRecording(false);
+      try { postWakeRecorderRef.current = null; } catch {}
     };
     postWakeRecorderRef.current = rec;
     setIsPostWakeRecording(true);
@@ -418,20 +622,23 @@ const PDFViewer = () => {
         postWakeRecorderRef.current.stop();
       }
     } catch {}
+    try { postWakeRecorderRef.current = null; } catch {}
   };
 
-  const startPodcastVAD = async () => {
+  // Internal starter that spins up the shared VAD engine without touching language flags
+  const internalStartPodcastVAD = async () => {
     try {
+      if (podcastStartingRef.current) return;
+      podcastStartingRef.current = true;
       // Disable browser SR auto-listen if active to avoid conflicts
       if (autoListenEnabled) stopAutoListen();
       if (!navigator.mediaDevices?.getUserMedia) {
         setError('Microphone not supported in this browser.');
+        podcastStartingRef.current = false;
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       postWakeStreamRef.current = stream;
-      podcastModeRef.current = true;
-      setIsPodcastMode(true);
 
       // Web Audio setup
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -448,7 +655,8 @@ const PDFViewer = () => {
       vadSpeechStartRef.current = 0;
 
       const loop = () => {
-        if (!podcastModeRef.current || !vadAnalyserRef.current) return;
+        // Run while either English or Hindi podcast mode is active
+        if (!(podcastModeRef.current || podcastHindiModeRef.current) || !vadAnalyserRef.current) return;
         try {
           vadAnalyserRef.current.getFloatTimeDomainData(vadDataArrayRef.current);
           const rms = computeRms(vadDataArrayRef.current);
@@ -500,11 +708,36 @@ const PDFViewer = () => {
         vadRAFRef.current = requestAnimationFrame(loop);
       };
       vadRAFRef.current = requestAnimationFrame(loop);
+      podcastStartingRef.current = false;
     } catch (err) {
       console.error(err);
       setError('Failed to start Podcast Mode.');
       await stopPodcastVAD();
+      podcastStartingRef.current = false;
     }
+  };
+
+  // Watchdog: if Hindi Podcast is enabled but no analyser/stream, try restarting
+  useEffect(() => {
+    const id = setInterval(async () => {
+      if (podcastHindiModeRef.current && (!vadAnalyserRef.current || !postWakeStreamRef.current)) {
+        try {
+          await internalStartPodcastVAD();
+        } catch {}
+      }
+    }, 1500);
+    return () => clearInterval(id);
+  }, []);
+
+  // English entrypoint: ensure Hindi is off, stop any existing VAD, then start
+  const startPodcastVAD = async () => {
+    if (podcastStartingRef.current) return;
+    try { await stopPodcastVAD(); } catch {}
+    podcastHindiModeRef.current = false;
+    setIsPodcastHindiMode(false);
+    podcastModeRef.current = true;
+    setIsPodcastMode(true);
+    await internalStartPodcastVAD();
   };
 
   const stopPodcastVAD = async () => {
@@ -514,6 +747,8 @@ const PDFViewer = () => {
     vadRAFRef.current = null;
     // Stop any active utterance recording
     stopUtteranceRecording();
+    postWakeRecorderRef.current = null;
+    setIsPostWakeRecording(false);
     // Close audio context
     try { if (vadAudioCtxRef.current) await vadAudioCtxRef.current.close(); } catch {}
     vadAudioCtxRef.current = null;
@@ -551,12 +786,13 @@ const PDFViewer = () => {
 
   // Hindi Podcast VAD flows reuse the same VAD engine but flip a flag
   const startPodcastHindiVAD = async () => {
-    podcastHindiModeRef.current = true;
-    setIsPodcastHindiMode(true);
-    // ensure English mode is off
+    if (podcastStartingRef.current) return;
+    try { await stopPodcastVAD(); } catch {}
     podcastModeRef.current = false;
     setIsPodcastMode(false);
-    await startPodcastVAD();
+    podcastHindiModeRef.current = true;
+    setIsPodcastHindiMode(true);
+    await internalStartPodcastVAD();
   };
 
   const stopPodcastHindiVAD = async () => {
@@ -701,6 +937,19 @@ const PDFViewer = () => {
     }
   }, [chatHistory]);
 
+  // Ensure only the active language's podcast mode remains enabled
+  useEffect(() => {
+    try {
+      if (language === 'hi' && isPodcastMode) {
+        stopPodcastVAD();
+      }
+      if (language !== 'hi' && isPodcastHindiMode) {
+        stopPodcastHindiVAD();
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
+
   const playElevenLabs = async (text) => {
     if (!text || !audioRef.current) return;
     try {
@@ -722,9 +971,15 @@ const PDFViewer = () => {
       audioRef.current.src = url;
       // When playback ends, resume Podcast Mode if it was active
       audioRef.current.onended = async () => {
-        if ((isPodcastMode || isPodcastHindiMode) && ttsSuspendRef.current) {
+        if ((podcastModeRef.current || podcastHindiModeRef.current) && ttsSuspendRef.current) {
           ttsSuspendRef.current = false;
-          try { await startPodcastVAD(); } catch {}
+          try {
+            if (podcastHindiModeRef.current) {
+              await startPodcastHindiVAD();
+            } else if (podcastModeRef.current) {
+              await startPodcastVAD();
+            }
+          } catch {}
         }
       };
       await audioRef.current.play().catch(() => {});
@@ -1229,6 +1484,13 @@ const PDFViewer = () => {
             <MessageSquare size={18} />
             Chatbot
           </button>
+          <button
+            className={`tab-btn ${activeTab === "viz" ? "active" : ""}`}
+            onClick={() => setActiveTab("viz")}
+          >
+            <Share2 size={18} />
+            Visualization
+          </button>
         </div>
 
         <div className="tab-content">
@@ -1312,23 +1574,25 @@ const PDFViewer = () => {
                   {isRecording ? <Square size={16} /> : <Mic size={16} />}
                 </button>
 
-                <button
-                  type="button"
-                  aria-label={isPodcastMode ? "Disable Podcast Mode" : "Enable Podcast Mode"}
-                  className={`podcast-btn ${isPodcastMode ? 'enabled' : ''}`}
-                  onClick={() => (isPodcastMode ? stopPodcastVAD() : startPodcastVAD())}
-                >
-                  {isPodcastMode ? 'Podcast: On' : 'Podcast: Off'}
-                </button>
-
-                <button
-                  type="button"
-                  aria-label={isPodcastHindiMode ? "Disable Hindi Podcast" : "Enable Hindi Podcast"}
-                  className={`podcast-btn hindi ${isPodcastHindiMode ? 'enabled' : ''}`}
-                  onClick={() => (isPodcastHindiMode ? stopPodcastHindiVAD() : startPodcastHindiVAD())}
-                >
-                  {isPodcastHindiMode ? 'Podcast (हिंदी): On' : 'Podcast (हिंदी): Off'}
-                </button>
+                {language === 'hi' ? (
+                  <button
+                    type="button"
+                    aria-label={isPodcastHindiMode ? "Disable Hindi Podcast" : "Enable Hindi Podcast"}
+                    className={`podcast-btn hindi ${isPodcastHindiMode ? 'enabled' : ''}`}
+                    onClick={() => (isPodcastHindiMode ? stopPodcastHindiVAD() : startPodcastHindiVAD())}
+                  >
+                    {isPodcastHindiMode ? 'Podcast (हिंदी): On' : 'Podcast (हिंदी): Off'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    aria-label={isPodcastMode ? "Disable Podcast Mode" : "Enable Podcast Mode"}
+                    className={`podcast-btn ${isPodcastMode ? 'enabled' : ''}`}
+                    onClick={() => (isPodcastMode ? stopPodcastVAD() : startPodcastVAD())}
+                  >
+                    {isPodcastMode ? 'Podcast: On' : 'Podcast: Off'}
+                  </button>
+                )}
 
                 {isRecording && (
                   <div className="listening-indicator">
@@ -1363,6 +1627,48 @@ const PDFViewer = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {activeTab === "viz" && (
+            <div className="visualization-tab">
+              <div className="viz-result">
+                <div className="no-selection">
+                  <Share2 size={48} className="no-selection-icon" />
+                  <h3>Visualization</h3>
+                  <p>Full-paper graph is generated automatically.</p>
+                  {selectedText && (
+                    <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#6b7280' }}>
+                      Selection-based graph will reflect your current selection
+                    </p>
+                  )}
+                </div>
+                {mindmapLoading && (
+                  <div className="analysis-loading" style={{ marginTop: '1rem' }}>
+                    <Loader2 size={20} className="loading-spinner" />
+                    <span>Generating mind map...</span>
+                  </div>
+                )}
+                {mindmapError && (
+                  <div className="analysis-error" style={{ marginTop: '1rem' }}>
+                    <AlertCircle size={16} />
+                    {mindmapError}
+                  </div>
+                )}
+                {graphData && !mindmapLoading && (
+                  <div>
+                    <div style={{ marginBottom: '1rem', padding: '0.5rem', background: '#f8fafc', borderRadius: '4px', borderLeft: '3px solid #10b981' }}>
+                      <strong>Graph View</strong>
+                    </div>
+                    <iframe
+                      title="Graph View"
+                      className="mindmap-iframe"
+                      sandbox="allow-scripts allow-same-origin"
+                      srcDoc={buildForceGraphHtml(graphData)}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

@@ -21,7 +21,23 @@ import fitz  # PyMuPDF
 from elevenlabs import ElevenLabs
 import google.generativeai as genai
 
+def extract_pdf_text(pdf_path):
+    """Extract all text content from a PDF file"""
+    try:
+        doc = fitz.open(pdf_path)
+        full_text = ""
+        for page_num in range(doc.page_count):
+            page = doc.load_page(page_num)
+            page_text = page.get_text()
+            full_text += page_text + "\n\n"
+        doc.close()
+        return full_text.strip()
+    except Exception as e:
+        logging.error(f"Failed to extract text from PDF: {e}")
+        return ""
+
 from rag import reload_rag_model, get_contextual_definition, chat_with_doc
+from data_extraction import extract_sections
 from Research_paper_function import generate_short_query
 from Search_Papers_Arvix import search_arxiv_papers
 from pdf_utils import ensure_pdf_loaded, current_pdf_path, model_loading, download_pdf
@@ -140,6 +156,7 @@ def index():
             "pdf": "/pdf", 
             "process-selection": "/process-selection",
             "ask": "/ask",
+            "mindmap": "/mindmap",
             "update-pdf": "/update-pdf",
             "log-click": "/log-click",
             "transcribe": "/transcribe",
@@ -155,6 +172,127 @@ def health_check():
         "model_loading": model_loading,
         "pdf_path": current_pdf_path
     })
+
+# ─── Mind Map Generation Route ────────────────────────────────────────────────
+@app.route('/mindmap', methods=['POST'])
+@cross_origin()
+def generate_mindmap():
+    try:
+        data = request.get_json(silent=True) or {}
+        scope = (data.get('scope') or 'selection').strip().lower()
+
+        def build_prompt_from_text(prefix_text: str) -> str:
+            return (
+                "You are a research analyst. Perform the following two tasks:\n\n"
+                "First, write a concise, one-sentence summary of the text below.\n\n"
+                "Then, using only the information from your summary, create a simple mind map. The mind map should be in Markdown format with nested bullet points.\n\n"
+                "Text:\n"
+                f"{prefix_text}\n\n"
+                "Output format:\n"
+                "Summary: <one sentence>\n\n"
+                "Mind Map:\n"
+                "- <Root>\n"
+                "  - <Key Point>\n"
+                "    - <Sub Point>\n"
+            )
+
+        def parse_summary_and_md(output_text: str):
+            try:
+                import re
+                # Capture after 'Summary:' until 'Mind Map:'
+                summary_match = re.search(r"Summary\s*:\s*(.+?)(?:\n\s*\n|\n\s*Mind Map:|$)", output_text, re.DOTALL | re.IGNORECASE)
+                mindmap_match = re.search(r"Mind Map\s*:\s*(.+)$", output_text, re.DOTALL | re.IGNORECASE)
+                summary_val = (summary_match.group(1).strip() if summary_match else output_text.strip().split('\n', 1)[0].strip())
+                mindmap_val = (mindmap_match.group(1).strip() if mindmap_match else "")
+                # Fallback: if mindmap is empty, produce a minimal markdown from the summary
+                if not mindmap_val:
+                    root = summary_val.split('.')[0].strip()
+                    if not root:
+                        root = "Summary"
+                    mindmap_val = f"- {root}\n  - Key Points\n    - (derived from summary)"
+                return summary_val, mindmap_val
+            except Exception:
+                return output_text.strip(), f"- {output_text.strip()}"
+
+        def parse_mindmap_to_graph(md_text: str, summary_text: str = ""):
+            try:
+                nodes = []
+                links = []
+                stack = []  # list of tuples (depth, node_id)
+                seen = {}
+                for raw in (md_text or '').splitlines():
+                    if not raw.strip():
+                        continue
+                    stripped = raw.lstrip('\t ')
+                    if not (stripped.startswith('-') or stripped.startswith('*')):
+                        continue
+                    indent = len(raw) - len(raw.lstrip(' '))
+                    # assume 2-space indentation per level, be tolerant
+                    depth = max(0, indent // 2)
+                    label = stripped[1:].strip()
+                    if not label:
+                        continue
+                    count = seen.get(label, 0)
+                    seen[label] = count + 1
+                    node_id = label if count == 0 else f"{label} ({count+1})"
+                    nodes.append({"id": node_id, "group": depth, "label": label})
+                    while stack and stack[-1][0] >= depth:
+                        stack.pop()
+                    if stack:
+                        links.append({"source": stack[-1][1], "target": node_id, "value": 1})
+                    stack.append((depth, node_id))
+                # Fallback: if graph is too sparse, synthesize a minimal one from summary
+                if not nodes:
+                    root = (summary_text.split(".")[0] or "Paper").strip() or "Paper"
+                    child = "Summary"
+                    nodes = [
+                        {"id": root, "group": 0, "label": root},
+                        {"id": child, "group": 1, "label": (summary_text[:80] + ("…" if len(summary_text) > 80 else "")) or child},
+                    ]
+                    links = [{"source": root, "target": child, "value": 1}]
+                elif not links and len(nodes) > 1:
+                    # connect first as root to others
+                    root_id = nodes[0]["id"]
+                    links = [{"source": root_id, "target": n["id"], "value": 1} for n in nodes[1:]]
+                return {"nodes": nodes, "links": links}
+            except Exception:
+                root = (summary_text.split(".")[0] or "Paper").strip() or "Paper"
+                return {"nodes": [{"id": root, "group": 0, "label": root}], "links": []}
+
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
+
+        if scope == 'document':
+            if current_pdf_path is None:
+                return jsonify(error="No PDF loaded"), 400
+            try:
+                full_text = extract_pdf_text(current_pdf_path)
+                if not full_text or len(full_text.strip()) < 50:
+                    return jsonify(error="Unable to extract sufficient text from PDF"), 500
+            except Exception as e:
+                logging.exception("PDF text extraction failed: %s", e)
+                return jsonify(error="Failed to extract text from PDF"), 500
+
+            prompt = build_prompt_from_text(full_text[:6000])
+            resp = model.generate_content(prompt)
+            output_text = (resp.text or '').strip()
+            summary, mindmap_md = parse_summary_and_md(output_text)
+            graph = parse_mindmap_to_graph(mindmap_md, summary)
+            return jsonify(summary=summary, mindmap_md=mindmap_md, graph=graph)
+
+        # selection flow
+        text = (data.get('text') or '').strip()
+        if not text:
+            return jsonify(error="Missing 'text'"), 400
+
+        prompt = build_prompt_from_text(text[:4000])
+        resp = model.generate_content(prompt)
+        output_text = (resp.text or '').strip()
+        summary, mindmap_md = parse_summary_and_md(output_text)
+        graph = parse_mindmap_to_graph(mindmap_md, summary)
+        return jsonify(summary=summary, mindmap_md=mindmap_md, graph=graph)
+    except Exception as e:
+        logging.exception("/mindmap failed")
+        return jsonify(error=str(e)), 500
 
 # ─── ArXiv Search / Log-Cick Routes ────────────────────────────────────────────
 @app.route("/search", methods=["POST"])
@@ -218,8 +356,10 @@ def transcribe_audio():
             
             # Transcribe audio using ElevenLabs Speech-to-Text API
             with open(temp_audio_path, 'rb') as audio_data:
+                # For Hindi, prefer multilingual model if supported
+                stt_model = "scribe_v1"
                 transcription = client.speech_to_text.convert(
-                    model_id="scribe_v1",
+                    model_id=stt_model,
                     file=audio_data,
                     language_code=language,
                     diarize=False,

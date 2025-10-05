@@ -2,12 +2,14 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, FileText, Calendar, User, Loader2 } from "lucide-react";
 import "./ResearchPapers.css";
+import { useLanguage } from "../lang/LanguageContext";
 
 const ResearchPapers = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   useEffect(() => {
     const storedResults = localStorage.getItem("searchResult");
@@ -49,7 +51,7 @@ const ResearchPapers = () => {
       navigate("/pdf-viewer");
     } catch (error) {
       console.error("Error during click or PDF update:", error);
-      setError("Failed to load paper. Please try again.");
+      setError(t('papers.error'));
     } finally {
       setLoading(false);
     }
@@ -72,14 +74,14 @@ const ResearchPapers = () => {
   return (
     <div className="research-container">
       <div className="research-header">
-        <h1>Research Papers</h1>
-        <p>Found {results.length} papers matching your search</p>
+        <h1>{t('papers.header')}</h1>
+        <p>{t('papers.found', { count: results.length })}</p>
       </div>
 
       {loading && (
         <div className="loading-overlay">
           <Loader2 className="loading-spinner" size={32} />
-          <p>Loading paper...</p>
+          <p>{t('papers.loading')}</p>
         </div>
       )}
 
@@ -127,7 +129,7 @@ const ResearchPapers = () => {
                   onClick={() => handlePaperClick(paper)}
                   disabled={loading}
                 >
-                  Analyze with AI
+                  {t('papers.analyze')}
                 </button>
                 <a
                   href={paper.url}
@@ -136,7 +138,7 @@ const ResearchPapers = () => {
                   className="external-link"
                 >
                   <ExternalLink size={16} />
-                  View Original
+                  {t('papers.viewOriginal')}
                 </a>
               </div>
             </div>
@@ -145,8 +147,8 @@ const ResearchPapers = () => {
       ) : (
         <div className="no-results">
           <FileText size={48} className="no-results-icon" />
-          <h3>No papers found</h3>
-          <p>Try searching with different keywords</p>
+          <h3>{t('papers.noResults')}</h3>
+          <p>{t('papers.tryAgain')}</p>
         </div>
       )}
     </div>
