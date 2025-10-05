@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { MessageSquare, FileText, Send, Loader2, AlertCircle, Mic, Square } from "lucide-react";
+import { MessageSquare, FileText, Send, Loader2, AlertCircle, Mic, Square, Brain } from "lucide-react";
+import MindMap from "./MindMap";
 import "./PDFViewer.css";
 
 const PDFViewer = () => {
@@ -37,6 +38,7 @@ const PDFViewer = () => {
   const postWakeStreamRef = useRef(null);
   const postWakeRecorderRef = useRef(null);
   const postWakeChunksRef = useRef([]);
+  const postWakeStartPendingRef = useRef(false);
   const vadAudioCtxRef = useRef(null);
   const vadAnalyserRef = useRef(null);
   const vadDataArrayRef = useRef(null);
@@ -1441,6 +1443,13 @@ const PDFViewer = () => {
             <MessageSquare size={18} />
             Chatbot
           </button>
+          <button
+            className={`tab-btn ${activeTab === "mindmap" ? "active" : ""}`}
+            onClick={() => setActiveTab("mindmap")}
+          >
+            <Brain size={18} />
+            Mind Map
+          </button>
         </div>
 
         <div className="tab-content">
@@ -1626,6 +1635,12 @@ const PDFViewer = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {activeTab === "mindmap" && (
+            <div className="mindmap-tab">
+              <MindMap pdfUrl={pdfUrl} />
             </div>
           )}
         </div>
