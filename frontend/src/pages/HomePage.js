@@ -10,7 +10,6 @@ const HomePage = () => {
   const { language, t } = useLanguage();
 
   useEffect(() => {
-    // If not selected yet, go to selection page
     if (!language) {
       navigate('/select-language');
     }

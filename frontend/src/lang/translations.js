@@ -11,12 +11,12 @@ export const translations = {
     'lang.continue': 'Continue',
 
     // HomePage
-    'home.title': 'Research',
+    'home.title': 'Vaani',
     'home.subtitle': 'Discover, analyze, and understand research papers with the power of AI. Enter a topic or question to find relevant academic papers and get instant insights.',
     'home.stats.papers': 'Papers',
     'home.stats.analysis': 'Analysis',
     'home.stats.free': 'Access',
-    'home.features.title': 'Why Choose ResearchAI?',
+    'home.features.title': 'Why Choose Vaani?',
 
     // SearchBar
     'search.heading': 'Discover Research Papers',
@@ -86,7 +86,7 @@ export const translations = {
     'home.stats.papers': 'पेपर',
     'home.stats.analysis': 'विश्लेषण',
     'home.stats.free': 'नि:शुल्क',
-    'home.features.title': 'क्यों चुनें ResearchAI?',
+    'home.features.title': 'क्यों चुनें Vaani?',
 
     // SearchBar
     'search.heading': 'रीसर्च पेपर खोजें',

@@ -9,15 +9,30 @@
 }
 
 .feature-card {
-  background: white;
+  background: rgba(10,12,18,0.85);
   padding: 2rem;
-  border-radius: 16px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-  border: 1px solid #e5e7eb;
-  transition: all 0.3s ease-in-out;
+  border-radius: 18px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255,255,255,0.06);
+  transition: transform 0.2s ease, box-shadow 0.25s ease, border-color 0.25s ease;
   text-align: center;
   position: relative;
   overflow: hidden;
+}
+
+.feature-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255,122,24,0.6), rgba(255,176,0,0.5));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
 }
 
 .feature-card::before {
@@ -27,16 +42,18 @@
   left: 0;
   right: 0;
   height: 4px;
-  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  background: linear-gradient(135deg, #ff7a18, #ffb000);
   transform: scaleX(0);
-  transition: transform 0.3s ease-in-out;
+  transition: transform 0.25s ease-in-out;
 }
 
 .feature-card:hover {
-  transform: translateY(-8px);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-  border-color: #06b6d4;
+  transform: translateY(-6px);
+  box-shadow: 0 26px 50px rgba(0, 0, 0, 0.55), 0 16px 36px rgba(255, 122, 24, 0.18);
+  border-color: rgba(255,122,24,0.6);
 }
+
+.feature-card:hover::after { opacity: 1; }
 
 .feature-card:hover::before {
   transform: scaleX(1);
@@ -46,17 +63,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 80px;
-  height: 80px;
-  background: linear-gradient(135deg, #ecfeff, #cffafe);
-  border-radius: 20px;
-  color: #06b6d4;
+  width: 84px;
+  height: 84px;
+  background: linear-gradient(135deg, #1a2030, #0b0d12);
+  border-radius: 22px;
+  color: #ff7a18;
   margin-bottom: 1.5rem;
-  transition: all 0.3s ease-in-out;
+  transition: all 0.25s ease-in-out;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
 }
 
 .feature-card:hover .feature-icon {
-  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  background: linear-gradient(135deg, #ff7a18, #ffb000);
   color: white;
   transform: scale(1.1);
 }
@@ -64,13 +82,13 @@
 .feature-title {
   font-size: 1.5rem;
   font-weight: 700;
-  color: #1f2937;
+  color: #ffffff;
   margin-bottom: 1rem;
   line-height: 1.3;
 }
 
 .feature-description {
-  color: #6b7280;
+  color: #c9cdd6;
   line-height: 1.6;
   font-size: 1rem;
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
-import { MessageSquare, FileText, Send, Loader2, AlertCircle, Mic, Square, Share2 } from "lucide-react";
+import { MessageSquare, FileText, Send, Loader2, AlertCircle, Mic, Square, Brain } from "lucide-react";
+import MindMap from "./MindMap";
 import "./PDFViewer.css";
-import { useLanguage } from "../lang/LanguageContext";
 
 const PDFViewer = () => {
   const [activeTab, setActiveTab] = useState("analysis");
@@ -13,14 +13,8 @@ const PDFViewer = () => {
   const [analysis, setAnalysis] = useState("");
   const [isRendering, setIsRendering] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [mindmapMd, setMindmapMd] = useState("");
-  const [mindmapSummary, setMindmapSummary] = useState("");
-  const [mindmapLoading, setMindmapLoading] = useState(false);
-  const [mindmapError, setMindmapError] = useState("");
-  const [graphData, setGraphData] = useState(null);
   
   const containerRef = useRef(null);
-  const tabContentRef = useRef(null);
   const selectionTimeoutRef = useRef(null);
   const lastSentRef = useRef("");
   const renderInProgressRef = useRef(false);
@@ -29,12 +23,23 @@ const PDFViewer = () => {
   const currentStreamRef = useRef(null);
   const audioRef = useRef(null);
   const currentAudioUrlRef = useRef(null);
-  // Wake-word/SR integrations removed
+  const recognitionRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const inactivityIntervalRef = useRef(null);
+  const speakingActiveRef = useRef(false);
+  const wakeStartedAtRef = useRef(0);
+  const pendingSubmitRef = useRef(false);
+  const postWakeStartPendingRef = useRef(false);
+  const utteranceRecRef = useRef(null);
+  const utteranceTimerRef = useRef(null);
+  const utteranceActiveRef = useRef(false);
+  const utteranceFinalTextRef = useRef("");
+  const [isUtteranceActive, setIsUtteranceActive] = useState(false);
   const postWakeActiveRef = useRef(false);
   const postWakeStreamRef = useRef(null);
   const postWakeRecorderRef = useRef(null);
   const postWakeChunksRef = useRef([]);
-  const podcastStartingRef = useRef(false);
+  const postWakeStartPendingRef = useRef(false);
   const vadAudioCtxRef = useRef(null);
   const vadAnalyserRef = useRef(null);
   const vadDataArrayRef = useRef(null);
@@ -46,25 +51,23 @@ const PDFViewer = () => {
   // Podcast Mode (VAD) state and controls
   const [isPodcastMode, setIsPodcastMode] = useState(false);
   const [isPodcastHindiMode, setIsPodcastHindiMode] = useState(false);
-  const [autoHindiContinuous, setAutoHindiContinuous] = useState(true);
   // Hysteresis thresholds to reduce flicker: higher to start, lower to keep speaking
-  const [vadStartThreshold, setVadStartThreshold] = useState(0.03);
-  const [vadStopThreshold, setVadStopThreshold] = useState(0.015);
-  // Timing tuned to avoid premature stops (allow longer pauses and longer utterances)
-  const [vadMinSpeechMs, setVadMinSpeechMs] = useState(1200);
-  const [vadSilenceMs, setVadSilenceMs] = useState(3500);
+  const [vadStartThreshold, setVadStartThreshold] = useState(0.035);
+  const [vadStopThreshold, setVadStopThreshold] = useState(0.02);
+  // Timing tuned to avoid premature stops
+  const [vadMinSpeechMs, setVadMinSpeechMs] = useState(900);
+  const [vadSilenceMs, setVadSilenceMs] = useState(1400);
   const vadSpeechStartRef = useRef(0);
   const ttsSuspendRef = useRef(false);
   const podcastModeRef = useRef(false);
   const podcastHindiModeRef = useRef(false);
   const vadRmsEmaRef = useRef(0);
   // Grace and cooldown windows to avoid chatter
-  const [vadGraceMs, setVadGraceMs] = useState(900); // ignore brief dips right after speech starts
-  const [vadCooldownMs, setVadCooldownMs] = useState(1400); // ignore starts shortly after an end
+  const [vadGraceMs, setVadGraceMs] = useState(240); // ignore brief dips right after speech starts
+  const [vadCooldownMs, setVadCooldownMs] = useState(600); // ignore starts shortly after an end
   const vadLastEndRef = useRef(0);
-  const [vadMaxUtteranceMs, setVadMaxUtteranceMs] = useState(30000);
+  const [vadMaxUtteranceMs, setVadMaxUtteranceMs] = useState(12000);
 
-  const { t, language } = useLanguage();
   // PDF URL from backend
   const pdfUrl = "http://127.0.0.1:5001/pdf";
   const pageNumberToDivRef = useRef(new Map());
@@ -184,14 +187,7 @@ const PDFViewer = () => {
               setIsRendering(false);
               // Scroll to first page after render
               setCurrentPage(1);
-              try {
-                const firstDiv = pageNumberToDivRef.current.get(1);
-                if (firstDiv) {
-                  firstDiv.scrollIntoView({ behavior: 'auto', block: 'start' });
-                } else if (containerRef.current) {
-                  containerRef.current.scrollTop = 0;
-                }
-              } catch {}
+              try { pageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
             }
 
           } catch (pageError) {
@@ -218,15 +214,6 @@ const PDFViewer = () => {
     initializePDF();
   }, []);
 
-  // Ensure sidebar tab content starts at the top when switching tabs
-  useEffect(() => {
-    try {
-      if (tabContentRef.current) {
-        tabContentRef.current.scrollTop = 0;
-      }
-    } catch {}
-  }, [activeTab]);
-
   // Handle text selection (exact same as working HTML version)
   const handleTextSelection = () => {
     const selection = window.getSelection();
@@ -252,9 +239,7 @@ const PDFViewer = () => {
     lastSentRef.current = text;
     setLoading(true);
     setError("");
-    // Also generate mindmap for selection in parallel
-    try { sendSelectionForMindmap(text); } catch {}
-
+    
     try {
       const response = await fetch("http://127.0.0.1:5001/process-selection", {
         method: "POST",
@@ -277,196 +262,6 @@ const PDFViewer = () => {
       setLoading(false);
     }
   };
-
-  const sendSelectionForMindmap = async (text) => {
-    try {
-      setMindmapLoading(true);
-      setMindmapError("");
-      const res = await fetch("http://127.0.0.1:5001/mindmap", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
-      });
-      const data = await res.json();
-      if (data && (data.mindmap_md || data.summary)) {
-        setMindmapMd(data.mindmap_md || "");
-        setMindmapSummary(data.summary || "");
-        setGraphData(data.graph || null);
-      } else if (data && data.error) {
-        setMindmapError(data.error);
-      } else {
-        setMindmapError("Failed to generate mind map.");
-      }
-    } catch (e) {
-      setMindmapError("Mind map generation failed. Try again.");
-    } finally {
-      setMindmapLoading(false);
-    }
-  };
-
-  const buildMindmapHtml = (md) => {
-    const safeMd = (md || "- Mindmap\n  - No content");
-    return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>
-html,body{height:100%;margin:0;background:#0b1220;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
-#mind{width:100%;height:100vh}
-.summary{padding:10px 14px;background:#0f172a;border-bottom:1px solid #1f2a44;color:#cbd5e1}
-code,pre{color:inherit}
-</style>
-<script src=\"https://cdn.jsdelivr.net/npm/d3@7\"></script>
-<script src=\"https://cdn.jsdelivr.net/npm/markmap-view@0.16.1\"></script>
-<script src=\"https://cdn.jsdelivr.net/npm/markmap-lib@0.16.1/dist/browser/index.min.js\"></script></head>
-<body>
-<div id=\"mind\"></div>
-<script>
-  const md = ${JSON.stringify(safeMd)};
-  window.addEventListener('DOMContentLoaded', () => {
-    try {
-      const { Transformer, Markmap } = window.markmap;
-      const transformer = new Transformer();
-      const { root } = transformer.transform(md);
-      Markmap.create('#mind', undefined, root);
-    } catch (e) {
-      const el = document.getElementById('mind');
-      if (el) {
-        el.style.whiteSpace = 'pre-wrap';
-        el.style.padding = '16px';
-        el.textContent = md;
-      }
-    }
-  });
-</script>
-</body></html>`;
-  };
-
-  const buildForceGraphHtml = (graph) => {
-    const dataJson = JSON.stringify(graph || { nodes: [], links: [] });
-    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-html,body{height:100%;margin:0;background:#000;color:#e5e7eb}
-#wrap{position:relative;width:100%;height:100vh;background:#000}
-#graph{width:100%;height:100vh;background:#000}
-.label{font:12px system-ui;pointer-events:none;fill:#cbd5e1}
-.hud{position:absolute;top:12px;right:12px;display:flex;gap:8px;z-index:10}
-.hud button{background:#0b0d12;color:#e5e7eb;border:1px solid #374151;border-radius:8px;padding:6px 10px;cursor:pointer}
-.hud button:hover{background:#11151f}
-</style></head><body>
-<div id="wrap">
-  <svg id="graph"></svg>
-  <div class="hud">
-    <button id="zoomIn">Zoom +</button>
-    <button id="zoomOut">Zoom -</button>
-    <button id="reset">Reset</button>
-    <button id="fs">Fullscreen</button>
-  </div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-<script>
-const data=${dataJson};
-const svg=d3.select('#graph');
-const width=window.innerWidth,height=window.innerHeight;
-svg.attr('viewBox',[0,0,width,height]);
-
-// Zoom/Pan behavior
-const zoom = d3.zoom().scaleExtent([0.2, 3]).on('zoom', (event)=>{
-  g.attr('transform', event.transform);
-});
-svg.call(zoom);
-
-// Root group
-const g = svg.append('g');
-
-// Compute degree map for sizing
-const degree = {};
-for (const n of data.nodes) degree[n.id] = 0;
-for (const l of data.links) {
-  const s = (typeof l.source === 'object') ? l.source.id : l.source;
-  const t = (typeof l.target === 'object') ? l.target.id : l.target;
-  if (s != null) degree[s] = (degree[s]||0) + 1;
-  if (t != null) degree[t] = (degree[t]||0) + 1;
-}
-
-function nodeRadius(d){
-  const deg = degree[d.id] || 0;
-  const depth = (d.group || 0);
-  const base = 8;
-  const byDegree = Math.sqrt(deg + 1) * 4;
-  const byDepth = Math.max(0, 3 - depth) * 2;
-  return base + byDegree + byDepth;
-}
-
-function shortLabel(d){
-  const raw = (d.label || d.id || '').trim();
-  if (!raw) return d.id;
-  const words = raw.split(/\s+/).slice(0,3).join(' ');
-  return words.length > 28 ? words.slice(0,28) + '…' : words;
-}
-
-// Dark palette tuned for black bg
-const palette=["#60a5fa","#34d399","#fbbf24","#f472b6","#22d3ee","#a78bfa","#f87171","#4ade80","#facc15","#38bdf8"]; 
-const link=g.append('g').attr('stroke','#1f2937').attr('stroke-opacity',0.8).selectAll('line').data(data.links).join('line').attr('stroke-width',d=>Math.sqrt(d.value||1));
-const node=g.append('g').selectAll('g').data(data.nodes).join('g');
-const simulation=d3.forceSimulation(data.nodes)
-  .force('link', d3.forceLink(data.links).id(d=>d.id).distance(110).strength(0.9))
-  .force('charge', d3.forceManyBody().strength(-240))
-  .force('center', d3.forceCenter(width/2,height/2))
-  .on('tick',()=>{
-    link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
-    node.attr('transform',d=>'translate(' + d.x + ',' + d.y + ')');
-  });
-node.append('circle').attr('r',d=>nodeRadius(d)).attr('fill',d=>palette[(d.group||0)%palette.length]).attr('stroke','#0b0d12').attr('stroke-width',1.2).call(drag(simulation));
-node.append('text').attr('class','label').attr('x',12).attr('y',4).attr('fill','#cbd5e1').text(d=>shortLabel(d));
-node.append('title').text(d=>d.label || d.id);
-function drag(sim){
-  function dragstarted(event){if(!event.active) sim.alphaTarget(0.3).restart(); event.subject.fx=event.subject.x; event.subject.fy=event.subject.y;}
-  function dragged(event){event.subject.fx=event.x; event.subject.fy=event.y;}
-  function dragended(event){if(!event.active) sim.alphaTarget(0); event.subject.fx=null; event.subject.fy=null;}
-  return d3.drag().on('start',dragstarted).on('drag',dragged).on('end',dragended);
-}
-
-// HUD controls
-document.getElementById('zoomIn').onclick = () => svg.transition().call(zoom.scaleBy, 1.2);
-document.getElementById('zoomOut').onclick = () => svg.transition().call(zoom.scaleBy, 0.8);
-document.getElementById('reset').onclick = () => svg.transition().call(zoom.transform, d3.zoomIdentity);
-document.getElementById('fs').onclick = () => {
-  const wrap = document.getElementById('wrap');
-  if (!document.fullscreenElement) wrap.requestFullscreen().catch(()=>{}); else document.exitFullscreen().catch(()=>{});
-};
-</script>
-</body></html>`;
-  };
-
-  // Auto-generate a full-paper mind map when the Visualization tab opens
-  useEffect(() => {
-    const run = async () => {
-      if (activeTab !== 'viz') return;
-      // Skip if we already generated and no selection change
-      if (mindmapMd || mindmapLoading) return;
-      try {
-        setMindmapLoading(true);
-        setMindmapError("");
-        const res = await fetch("http://127.0.0.1:5001/mindmap", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scope: 'document' })
-        });
-        const data = await res.json();
-        if (data && (data.mindmap_md || data.summary)) {
-          setMindmapMd(data.mindmap_md || "");
-          setMindmapSummary(data.summary || "");
-          setGraphData(data.graph || null);
-        } else if (data && data.error) {
-          setMindmapError(data.error);
-        } else {
-          setMindmapError("Failed to generate full-paper mind map.");
-        }
-      } catch (e) {
-        setMindmapError("Mind map generation failed. Try again.");
-      } finally {
-        setMindmapLoading(false);
-      }
-    };
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
 
   // Voice recording helpers
   const getSupportedMimeType = () => {
@@ -576,7 +371,6 @@ document.getElementById('fs').onclick = () => {
       const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : mimeType.includes("mpeg") ? "mp3" : "wav";
       form.append("audio", blob, `recording.${ext}`);
       form.append("language", "hi");
-      form.append("engine", "google");
 
       const res = await fetch("http://127.0.0.1:5001/transcribe", {
         method: "POST",
@@ -619,11 +413,6 @@ document.getElementById('fs').onclick = () => {
     rec.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) postWakeChunksRef.current.push(e.data);
     };
-    rec.onerror = () => {
-      try { rec.stop(); } catch {}
-      setIsPostWakeRecording(false);
-      try { postWakeRecorderRef.current = null; } catch {}
-    };
     rec.onstop = async () => {
       try {
         const blob = new Blob(postWakeChunksRef.current, { type: mimeType || 'audio/webm' });
@@ -637,7 +426,6 @@ document.getElementById('fs').onclick = () => {
         setError('Failed to process recorded utterance.');
       }
       setIsPostWakeRecording(false);
-      try { postWakeRecorderRef.current = null; } catch {}
     };
     postWakeRecorderRef.current = rec;
     setIsPostWakeRecording(true);
@@ -650,22 +438,20 @@ document.getElementById('fs').onclick = () => {
         postWakeRecorderRef.current.stop();
       }
     } catch {}
-    try { postWakeRecorderRef.current = null; } catch {}
   };
 
-  // Internal starter that spins up the shared VAD engine without touching language flags
-  const internalStartPodcastVAD = async () => {
+  const startPodcastVAD = async () => {
     try {
-      if (podcastStartingRef.current) return;
-      podcastStartingRef.current = true;
-      // Speech recognition wake-word removed; no SR to stop
+      // Disable browser SR auto-listen if active to avoid conflicts
+      if (autoListenEnabled) stopAutoListen();
       if (!navigator.mediaDevices?.getUserMedia) {
         setError('Microphone not supported in this browser.');
-        podcastStartingRef.current = false;
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       postWakeStreamRef.current = stream;
+      podcastModeRef.current = true;
+      setIsPodcastMode(true);
 
       // Web Audio setup
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -682,8 +468,7 @@ document.getElementById('fs').onclick = () => {
       vadSpeechStartRef.current = 0;
 
       const loop = () => {
-        // Run while either English or Hindi podcast mode is active
-        if (!(podcastModeRef.current || podcastHindiModeRef.current) || !vadAnalyserRef.current) return;
+        if (!podcastModeRef.current || !vadAnalyserRef.current) return;
         try {
           vadAnalyserRef.current.getFloatTimeDomainData(vadDataArrayRef.current);
           const rms = computeRms(vadDataArrayRef.current);
@@ -735,36 +520,11 @@ document.getElementById('fs').onclick = () => {
         vadRAFRef.current = requestAnimationFrame(loop);
       };
       vadRAFRef.current = requestAnimationFrame(loop);
-      podcastStartingRef.current = false;
     } catch (err) {
       console.error(err);
       setError('Failed to start Podcast Mode.');
       await stopPodcastVAD();
-      podcastStartingRef.current = false;
     }
-  };
-
-  // Watchdog: if Hindi Podcast is enabled but no analyser/stream, try restarting
-  useEffect(() => {
-    const id = setInterval(async () => {
-      if (podcastHindiModeRef.current && (!vadAnalyserRef.current || !postWakeStreamRef.current)) {
-        try {
-          await internalStartPodcastVAD();
-        } catch {}
-      }
-    }, 1500);
-    return () => clearInterval(id);
-  }, []);
-
-  // English entrypoint: ensure Hindi is off, stop any existing VAD, then start
-  const startPodcastVAD = async () => {
-    if (podcastStartingRef.current) return;
-    try { await stopPodcastVAD(); } catch {}
-    podcastHindiModeRef.current = false;
-    setIsPodcastHindiMode(false);
-    podcastModeRef.current = true;
-    setIsPodcastMode(true);
-    await internalStartPodcastVAD();
   };
 
   const stopPodcastVAD = async () => {
@@ -774,8 +534,6 @@ document.getElementById('fs').onclick = () => {
     vadRAFRef.current = null;
     // Stop any active utterance recording
     stopUtteranceRecording();
-    postWakeRecorderRef.current = null;
-    setIsPostWakeRecording(false);
     // Close audio context
     try { if (vadAudioCtxRef.current) await vadAudioCtxRef.current.close(); } catch {}
     vadAudioCtxRef.current = null;
@@ -813,13 +571,12 @@ document.getElementById('fs').onclick = () => {
 
   // Hindi Podcast VAD flows reuse the same VAD engine but flip a flag
   const startPodcastHindiVAD = async () => {
-    if (podcastStartingRef.current) return;
-    try { await stopPodcastVAD(); } catch {}
-    podcastModeRef.current = false;
-    setIsPodcastMode(false);
     podcastHindiModeRef.current = true;
     setIsPodcastHindiMode(true);
-    await internalStartPodcastVAD();
+    // ensure English mode is off
+    podcastModeRef.current = false;
+    setIsPodcastMode(false);
+    await startPodcastVAD();
   };
 
   const stopPodcastHindiVAD = async () => {
@@ -827,19 +584,6 @@ document.getElementById('fs').onclick = () => {
     setIsPodcastHindiMode(false);
     await stopPodcastVAD();
   };
-
-  // Ensure Hindi continuous listening restarts if TTS not used
-  useEffect(() => {
-    if (language === 'hi' && isPodcastHindiMode && autoHindiContinuous) {
-      // watchdog: if VAD loop stopped, try re-starting
-      const id = setInterval(() => {
-        if (!vadAnalyserRef.current && !isPostWakeRecording) {
-          try { internalStartPodcastVAD(); } catch {}
-        }
-      }, 2500);
-      return () => clearInterval(id);
-    }
-  }, [language, isPodcastHindiMode, autoHindiContinuous]);
 
   const submitQuestion = async (questionText) => {
     const trimmed = (questionText || "").trim();
@@ -981,19 +725,6 @@ document.getElementById('fs').onclick = () => {
     }
   }, [chatHistory]);
 
-  // Ensure only the active language's podcast mode remains enabled
-  useEffect(() => {
-    try {
-      if (language === 'hi' && isPodcastMode) {
-        stopPodcastVAD();
-      }
-      if (language !== 'hi' && isPodcastHindiMode) {
-        stopPodcastHindiVAD();
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language]);
-
   const playElevenLabs = async (text) => {
     if (!text || !audioRef.current) return;
     try {
@@ -1015,17 +746,9 @@ document.getElementById('fs').onclick = () => {
       audioRef.current.src = url;
       // When playback ends, resume Podcast Mode if it was active
       audioRef.current.onended = async () => {
-        if ((podcastModeRef.current || podcastHindiModeRef.current) && ttsSuspendRef.current) {
+        if ((isPodcastMode || isPodcastHindiMode) && ttsSuspendRef.current) {
           ttsSuspendRef.current = false;
-          try {
-            if (podcastHindiModeRef.current) {
-              await startPodcastHindiVAD();
-            } else if (podcastModeRef.current) {
-              await startPodcastVAD();
-            }
-          } catch {}
-        } else if (language === 'hi' && autoHindiContinuous) {
-          try { await startPodcastHindiVAD(); } catch {}
+          try { await startPodcastVAD(); } catch {}
         }
       };
       await audioRef.current.play().catch(() => {});
@@ -1034,7 +757,87 @@ document.getElementById('fs').onclick = () => {
     }
   };
 
-  // Wake-word listening removed
+  // ─── Always-On Wake Word Listening ("hey vani" / "hey vaani") ───────────────
+  const [autoListenEnabled, setAutoListenEnabled] = useState(false);
+  const wakeStateRef = useRef({ wakeDetected: false, buffer: "", lastHeardAt: 0 });
+  const [wakePreset, setWakePreset] = useState("hi there"); 
+  const [customWake, setCustomWake] = useState("");
+
+  const supportsSpeechRecognition = () => {
+    return typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  };
+
+  const normalize = (s) => (s || "").toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Convert a phrase like "hey vaani" into a tolerant regex allowing repeated vowels and small variations
+  const phraseToRegex = (phrase) => {
+    const words = normalize(phrase).split(' ').filter(Boolean);
+    const parts = words.map(w => {
+      // allow repeated vowels and minor variations for the wake name
+      const flexible = w
+        .replace(/a/g, 'a+')
+        .replace(/e/g, 'e+')
+        .replace(/i/g, 'i+')
+        .replace(/o/g, 'o+')
+        .replace(/u/g, 'u+');
+      return flexible;
+    });
+    return new RegExp("\\b" + parts.join("\\s+") + "\\b", 'i');
+  };
+
+  // More flexible phrase matching for better detection
+  const isWakePhraseDetected = (transcript) => {
+    const lower = normalize(transcript);
+    const wakePhrases = getWakePhrases();
+    
+    // Try exact phrase match first
+    for (const phrase of wakePhrases) {
+      if (lower.includes(phrase)) return true;
+    }
+    
+    // Try word-by-word matching with more tolerance
+    for (const phrase of wakePhrases) {
+      const words = phrase.split(' ').filter(Boolean);
+      const transcriptWords = lower.split(' ').filter(Boolean);
+      
+      // Check if all words from phrase appear in transcript in order
+      let wordIndex = 0;
+      for (const transcriptWord of transcriptWords) {
+        if (wordIndex < words.length && transcriptWord.includes(words[wordIndex])) {
+          wordIndex++;
+        }
+      }
+      if (wordIndex === words.length) return true;
+    }
+    
+    // Try regex matching as fallback
+    const wakeRegexes = getWakeRegexes();
+    return wakeRegexes.some(r => r.test(lower));
+  };
+
+  const getWakeRegexes = () => {
+    const presets = [];
+    if (wakePreset === 'hey vaani') presets.push('hey vaani', 'hey vani');
+    if (wakePreset === 'okay vaani') presets.push('okay vaani', 'ok vaani', 'okay vani', 'ok vani');
+    if (wakePreset === 'hey research') presets.push('hey research');
+    if (wakePreset === 'hi there') presets.push('hi there', 'hi there', 'hey there');
+    if (wakePreset === 'custom' && customWake.trim()) presets.push(customWake.trim());
+    // Fallback to default if empty
+    if (presets.length === 0) presets.push('hi there');
+    return presets.map(phraseToRegex);
+  };
+
+  // Returns the raw phrases for simple substring fallback matching
+  const getWakePhrases = () => {
+    const phrases = [];
+    if (wakePreset === 'hey vaani') phrases.push('hey vaani', 'hey vani');
+    if (wakePreset === 'okay vaani') phrases.push('okay vaani', 'ok vaani', 'okay vani', 'ok vani');
+    if (wakePreset === 'hey research') phrases.push('hey research');
+    if (wakePreset === 'hi there') phrases.push('hi there', 'hey there');
+    if (wakePreset === 'custom' && customWake.trim()) phrases.push(customWake.trim());
+    if (phrases.length === 0) phrases.push('hi there');
+    return phrases.map(p => normalize(p));
+  };
 
   // Scroll helper to bring a given page into view
   const scrollToPage = (pageNum) => {
@@ -1198,7 +1001,290 @@ document.getElementById('fs').onclick = () => {
     setTimeout(() => { try { box.remove(); } catch {} }, 4200);
   };
 
-  // Removed wake-word auto-listen functionality
+  const startAutoListen = () => {
+    if (!supportsSpeechRecognition()) {
+      setError("Auto-listen not supported in this browser.");
+      return;
+    }
+    console.log("[Auto-listen] Starting background wake word detection...");
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 3; // Get multiple alternatives for better accuracy
+    try { recognition.serviceURI = 'wss://www.google.com/speech-api/v2/recognize'; } catch {}
+
+    const scheduleSilenceSubmit = (delayMs) => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(async () => {
+        if (!wakeStateRef.current.wakeDetected || !wakeStateRef.current.buffer) return;
+        if (pendingSubmitRef.current) return;
+        pendingSubmitRef.current = true;
+        const toAsk = wakeStateRef.current.buffer.trim();
+        wakeStateRef.current.wakeDetected = false;
+        wakeStateRef.current.buffer = "";
+        try { await submitQuestion(toAsk); } catch {}
+        pendingSubmitRef.current = false;
+      }, Math.max(0, delayMs || 0));
+    };
+
+    // Single-utterance recognition helpers
+    const stopUtteranceRecognition = () => {
+      try { if (utteranceRecRef.current) utteranceRecRef.current.stop(); } catch {}
+      if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+      utteranceActiveRef.current = false;
+      setIsUtteranceActive(false);
+      setIsPostWakeRecording(false);
+    };
+
+    const startUtteranceRecognition = () => {
+      if (utteranceActiveRef.current) return;
+      const SR2 = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec2 = new SR2();
+      rec2.lang = 'en-US';
+      rec2.continuous = false; // stop on pause
+      rec2.interimResults = true;
+      rec2.maxAlternatives = 3; // Get multiple alternatives for better accuracy
+      try { rec2.serviceURI = 'wss://www.google.com/speech-api/v2/recognize'; } catch {}
+      utteranceRecRef.current = rec2;
+      utteranceActiveRef.current = true;
+      setIsUtteranceActive(true);
+      setIsPostWakeRecording(true);
+      utteranceFinalTextRef.current = "";
+
+      let latestTranscript = "";
+      rec2.onresult = (evt) => {
+        let full = "";
+        for (let i = evt.resultIndex; i < evt.results.length; i++) {
+          const result = evt.results[i];
+          // Use the best alternative (first one) for now
+          full += result[0].transcript;
+          if (result.isFinal) {
+            utteranceFinalTextRef.current = full;
+            console.log("[Question capture] Final result:", full);
+          } else {
+            console.log("[Question capture] Interim:", full);
+          }
+        }
+        latestTranscript = full;
+      };
+
+      rec2.onend = async () => {
+        const chosen = (utteranceFinalTextRef.current || latestTranscript || "").trim();
+        console.log("[Question capture] Ended with text:", chosen);
+        stopUtteranceRecognition();
+        if (chosen && chosen.length > 2) { // Only submit if we have meaningful text
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+          console.log("[Question capture] Submitting question:", chosen);
+          try { await submitQuestion(chosen); } catch {}
+        } else {
+          // No speech captured; just reset wake
+          console.log("[Question capture] No meaningful speech captured, resetting...");
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+        }
+        
+        // Always restart auto-listen after question capture ends
+        console.log("[Auto-listen] Question capture ended, autoListenEnabled:", autoListenEnabled);
+        
+        // Force restart regardless of autoListenEnabled state if we have a recognition object
+        if (recognitionRef.current) {
+          console.log("[Auto-listen] Force restarting after question capture...");
+          // Reset any pending states
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+          speakingActiveRef.current = false;
+          pendingSubmitRef.current = false;
+          
+          // Ensure autoListenEnabled is true for restart
+          if (!autoListenEnabled) {
+            console.log("[Auto-listen] Re-enabling auto-listen for restart");
+            setAutoListenEnabled(true);
+          }
+          
+          setTimeout(() => {
+            try { 
+              if (recognitionRef.current) {
+                recognitionRef.current.start(); 
+                console.log("[Auto-listen] Restarted successfully after question");
+              }
+            } catch (e) {
+              console.log("[Auto-listen] Restart failed:", e);
+              // Try again after a longer delay
+              setTimeout(() => {
+                try { 
+                  if (recognitionRef.current) {
+                    recognitionRef.current.start(); 
+                    console.log("[Auto-listen] Second restart attempt successful");
+                  }
+                } catch (e2) {
+                  console.log("[Auto-listen] Second restart also failed:", e2);
+                }
+              }, 2000);
+            }
+          }, 1000); // Longer delay to ensure clean restart
+        } else {
+          console.log("[Auto-listen] Cannot restart - no recognition object available");
+        }
+      };
+
+      // Safety cutoff in case the API hangs - increased timeout for better question capture
+      if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+      utteranceTimerRef.current = setTimeout(() => {
+        console.log("[Question capture] Timeout reached, stopping...");
+        stopUtteranceRecognition();
+      }, 15000);
+
+      try { rec2.start(); } catch {}
+    };
+
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        // Use the best alternative (first one) for better accuracy, same as phrase detection
+        transcript += (res[0].transcript + ' ');
+      }
+      const lower = normalize(transcript);
+      const now = Date.now();
+      
+      // Debug: log what we're hearing
+      if (transcript.trim()) {
+        console.log("[Auto-listen] Heard:", transcript.trim());
+      }
+      
+      // Use improved wake phrase detection
+      const containsWake = isWakePhraseDetected(transcript);
+
+      // Any audible result updates last heard time
+      wakeStateRef.current.lastHeardAt = now;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+
+      if (!wakeStateRef.current.wakeDetected) {
+        if (containsWake) {
+          wakeStateRef.current.wakeDetected = true;
+          wakeStartedAtRef.current = now;
+          // Stop base recognition first; start single-utterance mic in onend to avoid conflicts
+          postWakeStartPendingRef.current = true;
+          try { recognition.stop(); } catch {}
+          console.log('[Wake] Phrase detected:', transcript.trim());
+        }
+      }
+      // Prefer final results as a cue to submit soon
+      const hasFinal = Array.from(event.results).some(r => r.isFinal);
+      // No-op: single-utterance capture handles submission
+    };
+
+    recognition.onspeechstart = () => {
+      speakingActiveRef.current = true;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
+
+    recognition.onspeechend = () => {
+      speakingActiveRef.current = false;
+      // handled by single-utterance capture
+    };
+
+    recognition.onsoundend = () => {
+      // handled by single-utterance capture
+    };
+
+    recognition.onaudioend = () => {
+      // handled by single-utterance capture
+    };
+
+    recognition.onend = () => {
+      console.log("[Auto-listen] Base recognition ended, autoListenEnabled:", autoListenEnabled);
+      // If we just detected wake and stopped, start the single-utterance capture now
+      if (postWakeStartPendingRef.current) {
+        postWakeStartPendingRef.current = false;
+        startUtteranceRecognition();
+        return;
+      }
+      // Otherwise, auto-restart while enabled
+      if (autoListenEnabled) {
+        console.log("[Auto-listen] Base recognition ended, restarting...");
+        setTimeout(() => {
+          try { 
+            if (recognition && autoListenEnabled) {
+              recognition.start(); 
+              console.log("[Auto-listen] Base recognition restarted successfully");
+            }
+          } catch (e) {
+            console.log("[Auto-listen] Base restart failed:", e);
+            // Try again after a longer delay
+            setTimeout(() => {
+              try { 
+                if (recognition && autoListenEnabled) {
+                  recognition.start(); 
+                  console.log("[Auto-listen] Base recognition second restart successful");
+                }
+              } catch (e2) {
+                console.log("[Auto-listen] Base second restart also failed:", e2);
+              }
+            }, 2000);
+          }
+        }, 500);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.log("[Auto-listen] Recognition error:", event.error);
+      // brief backoff and restart
+      if (autoListenEnabled) {
+        setTimeout(() => {
+          try { 
+            recognition.start(); 
+            console.log("[Auto-listen] Restarted after error");
+          } catch (e) {
+            console.log("[Auto-listen] Error restart failed:", e);
+          }
+        }, 1000);
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try { recognition.start(); } catch {}
+    setAutoListenEnabled(true);
+
+    // Fallback inactivity checker: if we haven't heard anything for 1.2s after wake, submit
+    if (inactivityIntervalRef.current) clearInterval(inactivityIntervalRef.current);
+    inactivityIntervalRef.current = setInterval(() => {
+      if (!autoListenEnabled) return;
+      const nowTs = Date.now();
+      // If single-utterance capture isn't active and wake detected, fallback submit on inactivity
+      if (wakeStateRef.current.wakeDetected && !utteranceActiveRef.current) {
+        if (nowTs - (wakeStateRef.current.lastHeardAt || 0) > 1500 && !pendingSubmitRef.current) {
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          pendingSubmitRef.current = true;
+          const toAsk = (wakeStateRef.current.buffer || '').trim();
+          wakeStateRef.current.wakeDetected = false;
+          wakeStateRef.current.buffer = '';
+          submitQuestion(toAsk).finally(() => { pendingSubmitRef.current = false; });
+        }
+      }
+      // Safety cutoff: if wake active for too long without input, reset
+      if (wakeStartedAtRef.current && nowTs - wakeStartedAtRef.current > 15000) {
+        wakeStateRef.current.wakeDetected = false;
+        wakeStateRef.current.buffer = '';
+        wakeStartedAtRef.current = 0;
+      }
+    }, 400);
+  };
+
+  const stopAutoListen = () => {
+    console.log("[Auto-listen] Manually stopping auto-listen");
+    setAutoListenEnabled(false);
+    try { if (recognitionRef.current) recognitionRef.current.stop(); } catch {}
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (inactivityIntervalRef.current) clearInterval(inactivityIntervalRef.current);
+    wakeStateRef.current = { wakeDetected: false, buffer: "", lastHeardAt: 0 };
+    speakingActiveRef.current = false;
+    pendingSubmitRef.current = false;
+    wakeStartedAtRef.current = 0;
+  };
 
   // Add event listeners for text selection (same as working HTML version)
   useEffect(() => {
@@ -1360,15 +1446,15 @@ document.getElementById('fs').onclick = () => {
             Chatbot
           </button>
           <button
-            className={`tab-btn ${activeTab === "viz" ? "active" : ""}`}
-            onClick={() => setActiveTab("viz")}
+            className={`tab-btn ${activeTab === "mindmap" ? "active" : ""}`}
+            onClick={() => setActiveTab("mindmap")}
           >
-            <Share2 size={18} />
-            Visualization
+            <Brain size={18} />
+            Mind Map
           </button>
         </div>
 
-        <div className="tab-content" ref={tabContentRef}>
+        <div className="tab-content">
           {activeTab === "analysis" && (
             <div className="analysis-tab">
               {selectedText ? (
@@ -1449,38 +1535,48 @@ document.getElementById('fs').onclick = () => {
                   {isRecording ? <Square size={16} /> : <Mic size={16} />}
                 </button>
 
-                {language === 'hi' ? (
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    <button
-                      type="button"
-                      aria-label={isPodcastHindiMode ? "Disable Hindi Podcast" : "Enable Hindi Podcast"}
-                      className={`podcast-btn hindi ${isPodcastHindiMode ? 'enabled' : ''}`}
-                      onClick={() => (isPodcastHindiMode ? stopPodcastHindiVAD() : startPodcastHindiVAD())}
-                    >
-                      {isPodcastHindiMode ? 'Podcast (हिंदी): On' : 'Podcast (हिंदी): Off'}
-                    </button>
-                    {isPodcastHindiMode && (
-                      <span className={`mic-badge ${isPostWakeRecording ? 'pulse' : ''}`} title="Listening">
-                        <Mic size={14} />
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    <button
-                      type="button"
-                      aria-label={isPodcastMode ? "Disable Podcast Mode" : "Enable Podcast Mode"}
-                      className={`podcast-btn ${isPodcastMode ? 'enabled' : ''}`}
-                      onClick={() => (isPodcastMode ? stopPodcastVAD() : startPodcastVAD())}
-                    >
-                      {isPodcastMode ? 'Podcast: On' : 'Podcast: Off'}
-                    </button>
-                    {isPodcastMode && (
-                      <span className={`mic-badge ${isPostWakeRecording ? 'pulse' : ''}`} title="Listening">
-                        <Mic size={14} />
-                      </span>
-                    )}
-                  </div>
+                <button
+                  type="button"
+                  aria-label={isPodcastMode ? "Disable Podcast Mode" : "Enable Podcast Mode"}
+                  className={`podcast-btn ${isPodcastMode ? 'enabled' : ''}`}
+                  onClick={() => (isPodcastMode ? stopPodcastVAD() : startPodcastVAD())}
+                >
+                  {isPodcastMode ? 'Podcast: On' : 'Podcast: Off'}
+                </button>
+
+                <button
+                  type="button"
+                  aria-label={isPodcastHindiMode ? "Disable Hindi Podcast" : "Enable Hindi Podcast"}
+                  className={`podcast-btn hindi ${isPodcastHindiMode ? 'enabled' : ''}`}
+                  onClick={() => (isPodcastHindiMode ? stopPodcastHindiVAD() : startPodcastHindiVAD())}
+                >
+                  {isPodcastHindiMode ? 'Podcast (हिंदी): On' : 'Podcast (हिंदी): Off'}
+                </button>
+
+                {autoListenEnabled && (
+                  <button
+                    type="button"
+                    aria-label="Restart auto-listen"
+                    className="chat-restart-btn"
+                    onClick={() => {
+                      console.log("[Auto-listen] Manual restart requested");
+                      if (recognitionRef.current) {
+                        try {
+                          recognitionRef.current.stop();
+                        } catch {}
+                        setTimeout(() => {
+                          try {
+                            recognitionRef.current.start();
+                            console.log("[Auto-listen] Manual restart successful");
+                          } catch (e) {
+                            console.log("[Auto-listen] Manual restart failed:", e);
+                          }
+                        }, 500);
+                      }
+                    }}
+                  >
+                    🔄
+                  </button>
                 )}
 
                 {isRecording && (
@@ -1489,6 +1585,37 @@ document.getElementById('fs').onclick = () => {
                     Listening...
                   </div>
                 )}
+                {isPostWakeRecording && (
+                  <div className="listening-indicator" style={{ color: '#10b981' }}>
+                    <span className="dot" style={{ background: '#10b981' }} />
+                    Recording question…
+                  </div>
+                )}
+
+                <div className="wake-select">
+                  <label className="wake-label" htmlFor="wake-preset">Wake</label>
+                  <select
+                    id="wake-preset"
+                    className="wake-select-input"
+                    value={wakePreset}
+                    onChange={(e) => setWakePreset(e.target.value)}
+                  >
+                    <option value="hey vaani">Hey Vaani</option>
+                    <option value="okay vaani">Okay Vaani</option>
+                    <option value="hey research">Hey Research</option>
+                    <option value="hi there">Hi There</option>
+                    <option value="custom">Custom…</option>
+                  </select>
+                  {wakePreset === 'custom' && (
+                    <input
+                      type="text"
+                      className="wake-custom-input"
+                      placeholder="Type your wake phrase"
+                      value={customWake}
+                      onChange={(e) => setCustomWake(e.target.value)}
+                    />
+                  )}
+                </div>
               </div>
               
               <form onSubmit={handleChatSubmit} className="chat-input-form">
@@ -1513,45 +1640,9 @@ document.getElementById('fs').onclick = () => {
             </div>
           )}
 
-          {activeTab === "viz" && (
-            <div className="visualization-tab">
-              <div className="viz-result">
-                <div className="no-selection">
-                  <Share2 size={48} className="no-selection-icon" />
-                  <h3>Visualization</h3>
-                  <p>Full-paper graph is generated automatically.</p>
-                  {selectedText && (
-                    <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#6b7280' }}>
-                      Selection-based graph will reflect your current selection
-                    </p>
-                  )}
-                </div>
-                {mindmapLoading && (
-                  <div className="analysis-loading" style={{ marginTop: '1rem' }}>
-                    <Loader2 size={20} className="loading-spinner" />
-                    <span>Generating mind map...</span>
-                  </div>
-                )}
-                {mindmapError && (
-                  <div className="analysis-error" style={{ marginTop: '1rem' }}>
-                    <AlertCircle size={16} />
-                    {mindmapError}
-                  </div>
-                )}
-                {graphData && !mindmapLoading && (
-                  <div>
-                    <div style={{ marginBottom: '1rem', padding: '0.5rem', background: '#f8fafc', borderRadius: '4px', borderLeft: '3px solid #10b981' }}>
-                      <strong>Graph View</strong>
-                    </div>
-                    <iframe
-                      title="Graph View"
-                      className="mindmap-iframe"
-                      sandbox="allow-scripts allow-same-origin"
-                      srcDoc={buildForceGraphHtml(graphData)}
-                    />
-                  </div>
-                )}
-              </div>
+          {activeTab === "mindmap" && (
+            <div className="mindmap-tab">
+              <MindMap pdfUrl={pdfUrl} />
             </div>
           )}
         </div>

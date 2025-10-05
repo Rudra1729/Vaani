@@ -8,13 +8,20 @@ const ResearchPapers = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
   const navigate = useNavigate();
   const { t } = useLanguage();
 
   useEffect(() => {
     const storedResults = localStorage.getItem("searchResult");
+    const storedQuery = localStorage.getItem("lastSearchTerm");
     if (storedResults) {
       setResults(JSON.parse(storedResults));
+      if (storedQuery) {
+        // Ensure plain string, strip brackets/quotes if accidentally stored
+        const clean = String(storedQuery).replace(/^\[object Object\]$/i, '').replace(/^"|"$/g, '');
+        setQuery(clean);
+      }
     } else {
       navigate("/");
     }

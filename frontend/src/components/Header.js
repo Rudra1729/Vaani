@@ -12,7 +12,7 @@
 //         <Link to="/" className="logo">
 //           <BookOpen size={24} />
 //           <span className="logo-text">
-//             <span className="blue-text">Research</span>AI
+//             <span className="blue-text">Vaani</span>
 //           </span>
 //         </Link>
         
@@ -47,7 +47,7 @@
 // // const Header = () => (
 // //   <header className="header">
 // //     <div className="logo">
-// //       📖 <span className="blue-text">Research</span>AI
+// //       📖 <span className="blue-text">Vaani</span>
 // //     </div>
 // //     <div className="auth-buttons">
 // //       <button className="sign-in">Sign In</button>
@@ -103,9 +103,7 @@ const Header = () => {
 
         <Link to="/" className="logo">
           <BookOpen size={24} />
-          <span className="logo-text">
-            <span className="blue-text">Research</span>AI
-          </span>
+          <span className="logo-text">Vaani</span>
         </Link>
 
         <nav className="nav">
@@ -125,15 +123,25 @@ const Header = () => {
           </Link>
         </nav>
 
-        {/* Language Toggle */}
-        <div className="nav">
+        {/* Language Toggle: segmented like nav tabs */}
+        <div className="nav lang-segment">
           <button
             type="button"
-            className="nav-link"
-            onClick={() => setLanguage(language === 'hi' ? 'en' : 'hi')}
-            aria-label="Toggle language"
+            className={`nav-link ${language === 'en' ? 'active' : ''}`}
+            onClick={() => setLanguage('en')}
+            aria-pressed={language === 'en'}
+            aria-label="Switch to English"
           >
-            {language === 'hi' ? t('lang.english') : t('lang.hindi')}
+            {t('lang.english')}
+          </button>
+          <button
+            type="button"
+            className={`nav-link ${language === 'hi' ? 'active' : ''}`}
+            onClick={() => setLanguage('hi')}
+            aria-pressed={language === 'hi'}
+            aria-label="Switch to Hindi"
+          >
+            {t('lang.hindi')}
           </button>
         </div>
       </div>
