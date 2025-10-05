@@ -10,9 +10,16 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f8fafc;
-  color: #1f2937;
+  background-color: #0b0d12; /* obsidian */
+  background-image:
+    linear-gradient(180deg, rgba(11,13,18,1), rgba(5,6,10,1));
+  color: #e5e7eb;
   line-height: 1.6;
+}
+
+/* Elevate base visuals via tokens */
+.app {
+  background: linear-gradient(180deg, rgba(2,6,23,0) 0%, rgba(2,6,23,0.02) 100%);
 }
 
 .app {
@@ -27,7 +34,7 @@ body {
 }
 
 .blue-text {
-  color: #06b6d4;
+  color: #ff7a18; /* electric orange */
 }
 
 /* Modern button styles */

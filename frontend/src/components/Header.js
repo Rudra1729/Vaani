@@ -12,7 +12,7 @@
 //         <Link to="/" className="logo">
 //           <BookOpen size={24} />
 //           <span className="logo-text">
-//             <span className="blue-text">Research</span>AI
+//             <span className="blue-text">Vaani</span>
 //           </span>
 //         </Link>
         
@@ -47,7 +47,7 @@
 // // const Header = () => (
 // //   <header className="header">
 // //     <div className="logo">
-// //       📖 <span className="blue-text">Research</span>AI
+// //       📖 <span className="blue-text">Vaani</span>
 // //     </div>
 // //     <div className="auth-buttons">
 // //       <button className="sign-in">Sign In</button>
@@ -101,9 +101,7 @@ const Header = () => {
 
         <Link to="/" className="logo">
           <BookOpen size={24} />
-          <span className="logo-text">
-            <span className="blue-text">Research</span>AI
-          </span>
+          <span className="logo-text">Vaani</span>
         </Link>
 
         <nav className="nav">

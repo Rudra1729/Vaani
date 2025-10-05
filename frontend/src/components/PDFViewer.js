@@ -28,6 +28,7 @@ const PDFViewer = () => {
   const speakingActiveRef = useRef(false);
   const wakeStartedAtRef = useRef(0);
   const pendingSubmitRef = useRef(false);
+  const postWakeStartPendingRef = useRef(false);
   const utteranceRecRef = useRef(null);
   const utteranceTimerRef = useRef(null);
   const utteranceActiveRef = useRef(false);
@@ -688,9 +689,10 @@ const PDFViewer = () => {
   };
 
   const formatAnalysis = (text) => {
-    return text
-      .replace(/\\*Operational Context\\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Operational Context</h4>')
-      .replace(/\\*Other Use-cases\\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Other Use-cases</h4>');
+    const cleaned = (text || '').replace(/\*\*/g, '');
+    return cleaned
+      .replace(/\\*Operational Context\\*/g, '<h4 style="margin:10px 0;color:#ffb000">Operational Context</h4>')
+      .replace(/\\*Other Use-cases\\*/g, '<h4 style="margin:10px 0;color:#ffb000">Other Use-cases</h4>');
   };
 
   // Initialize audio element for ElevenLabs playback
