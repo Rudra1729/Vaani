@@ -19,6 +19,7 @@ from pdf_utils import cleanup_old_pdfs
 
 import fitz  # PyMuPDF
 from elevenlabs import ElevenLabs
+import google.generativeai as genai
 
 from rag import reload_rag_model, get_contextual_definition, chat_with_doc
 from Research_paper_function import generate_short_query
@@ -193,6 +194,11 @@ def transcribe_audio():
         audio_file = request.files['audio']
         if audio_file.filename == '':
             return jsonify(error="No audio file selected"), 400
+
+        # Optional language parameter (e.g., 'en', 'hi')
+        language = (request.form.get('language') or request.args.get('language') or 'en').strip()
+        if not language:
+            language = 'en'
         
         # Determine safe filename and extension (accept common audio types)
         safe_name = secure_filename(audio_file.filename or 'audio')
@@ -215,7 +221,7 @@ def transcribe_audio():
                 transcription = client.speech_to_text.convert(
                     model_id="scribe_v1",
                     file=audio_data,
-                    language_code="en",
+                    language_code=language,
                     diarize=False,
                     timestamps_granularity="word"
                 )
@@ -240,7 +246,7 @@ def transcribe_audio():
             
             return jsonify({
                 "text": transcribed_text,
-                "language": getattr(transcription, 'language_code', 'en'),
+                "language": getattr(transcription, 'language_code', language or 'en'),
                 "confidence": getattr(transcription, 'language_probability', 1.0)
             }), 200
             
@@ -258,6 +264,61 @@ def transcribe_audio():
     except Exception as e:
         logging.error(f"Transcription endpoint error: {e}")
         return jsonify(error=f"Server error: {str(e)}"), 500
+
+
+def _translate_text(text: str, target_lang: str) -> str:
+    try:
+        tgt = (target_lang or '').strip().lower()
+        if not text:
+            return ''
+        # Simple translate prompt; model already configured in rag.py import
+        prompt = f"""
+You are a translator. Translate the following text into {tgt}.
+Preserve meaning and tone. Output only the translated text with no notes.
+
+Text:
+{text}
+"""
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
+        resp = model.generate_content(prompt)
+        return (resp.text or '').strip()
+    except Exception:
+        logging.exception("Translation failed")
+        return text
+
+
+@app.route('/ask-hindi', methods=['POST'])
+def ask_hindi():
+    data = request.get_json(silent=True) or {}
+    question_hi = (data.get('question_hi') or '').strip()
+    if not question_hi:
+        return jsonify(error="Question cannot be empty"), 400
+    try:
+        # hi -> en
+        question_en = _translate_text(question_hi, 'en')
+        ans = chat_with_doc(question_en)
+        if isinstance(ans, dict):
+            answer_en = ans.get('text') or ''
+            page = ans.get('page')
+            snippet = ans.get('snippet')
+            anchors = ans.get('anchors')
+        else:
+            answer_en = str(ans)
+            page = None
+            snippet = None
+            anchors = None
+        # en -> hi
+        answer_hi = _translate_text(answer_en, 'hi')
+        return jsonify(
+            answer_hi=answer_hi,
+            answer_en=answer_en,
+            page=page,
+            snippet=snippet,
+            anchors=anchors
+        )
+    except Exception as e:
+        logging.exception("/ask-hindi failed")
+        return jsonify(error=str(e)), 500
 
 @app.route("/tts", methods=["POST", "GET"])
 @cross_origin()
