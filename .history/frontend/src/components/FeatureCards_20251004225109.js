@@ -7,7 +7,7 @@ const FeatureCards = () => (
     <FeatureCard 
       icon={<Search size={32} />} 
       title="Smart Search" 
-      description="Find relevant papers using the Arxiv API across thousands of relevant research papers." 
+      description="Find relevant papers using AI-powered semantic search across thousands of research papers." 
     />
     <FeatureCard 
       icon={<Brain size={32} />} 
