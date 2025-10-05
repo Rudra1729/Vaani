@@ -206,6 +206,7 @@ const SearchBar = () => {
       {error && (
         <div className="error-message">
           {error}
+          
         </div>
       )}
 
