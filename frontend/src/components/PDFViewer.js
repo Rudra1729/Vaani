@@ -47,6 +47,7 @@ const PDFViewer = () => {
 
   // Podcast Mode (VAD) state and controls
   const [isPodcastMode, setIsPodcastMode] = useState(false);
+  const [isPodcastHindiMode, setIsPodcastHindiMode] = useState(false);
   // Hysteresis thresholds to reduce flicker: higher to start, lower to keep speaking
   const [vadStartThreshold, setVadStartThreshold] = useState(0.035);
   const [vadStopThreshold, setVadStopThreshold] = useState(0.02);
@@ -56,6 +57,7 @@ const PDFViewer = () => {
   const vadSpeechStartRef = useRef(0);
   const ttsSuspendRef = useRef(false);
   const podcastModeRef = useRef(false);
+  const podcastHindiModeRef = useRef(false);
   const vadRmsEmaRef = useRef(0);
   // Grace and cooldown windows to avoid chatter
   const [vadGraceMs, setVadGraceMs] = useState(240); // ignore brief dips right after speech starts
@@ -318,6 +320,7 @@ const PDFViewer = () => {
       const form = new FormData();
       const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : mimeType.includes("mpeg") ? "mp3" : "wav";
       form.append("audio", blob, `recording.${ext}`);
+      form.append("language", "en");
 
       const res = await fetch("http://127.0.0.1:5001/transcribe", {
         method: "POST",
@@ -327,6 +330,36 @@ const PDFViewer = () => {
       if (data && data.text) {
         // Auto-ask the transcribed question
         await submitQuestion(data.text);
+      } else if (data && data.error) {
+        setError(data.error);
+      } else {
+        setError("Transcription failed. Try again.");
+      }
+    } catch (e) {
+      console.error(e);
+      setError("Failed to send audio for transcription.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendAudioForTranscriptionHindi = async (blob, mimeType) => {
+    setLoading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : mimeType.includes("mpeg") ? "mp3" : "wav";
+      form.append("audio", blob, `recording.${ext}`);
+      form.append("language", "hi");
+
+      const res = await fetch("http://127.0.0.1:5001/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (data && data.text) {
+        // Route to Hindi ask
+        await submitHindiQuestion(data.text);
       } else if (data && data.error) {
         setError(data.error);
       } else {
@@ -363,7 +396,11 @@ const PDFViewer = () => {
     rec.onstop = async () => {
       try {
         const blob = new Blob(postWakeChunksRef.current, { type: mimeType || 'audio/webm' });
-        await sendAudioForTranscription(blob, mimeType || 'audio/webm');
+        if (podcastHindiModeRef.current) {
+          await sendAudioForTranscriptionHindi(blob, mimeType || 'audio/webm');
+        } else {
+          await sendAudioForTranscription(blob, mimeType || 'audio/webm');
+        }
       } catch (err) {
         console.error(err);
         setError('Failed to process recorded utterance.');
@@ -512,6 +549,22 @@ const PDFViewer = () => {
     postWakeStreamRef.current = null;
   };
 
+  // Hindi Podcast VAD flows reuse the same VAD engine but flip a flag
+  const startPodcastHindiVAD = async () => {
+    podcastHindiModeRef.current = true;
+    setIsPodcastHindiMode(true);
+    // ensure English mode is off
+    podcastModeRef.current = false;
+    setIsPodcastMode(false);
+    await startPodcastVAD();
+  };
+
+  const stopPodcastHindiVAD = async () => {
+    podcastHindiModeRef.current = false;
+    setIsPodcastHindiMode(false);
+    await stopPodcastVAD();
+  };
+
   const submitQuestion = async (questionText) => {
     const trimmed = (questionText || "").trim();
     if (!trimmed) return;
@@ -572,6 +625,41 @@ const PDFViewer = () => {
     }
   };
 
+  const submitHindiQuestion = async (questionHindiText) => {
+    const trimmed = (questionHindiText || "").trim();
+    if (!trimmed) return;
+    const newChatHistory = [...chatHistory, { type: "user", message: trimmed }];
+    setChatHistory(newChatHistory);
+    setChatInput("");
+
+    setLoading(true);
+    try {
+      const response = await fetch("http://127.0.0.1:5001/ask-hindi", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question_hi: trimmed }),
+      });
+      const data = await response.json();
+      if (data.answer_hi) {
+        setChatHistory([...newChatHistory, { type: "bot", message: data.answer_hi, page: data.page }]);
+        if (data.page) {
+          scrollToPage(data.page);
+        }
+        // Speak in Hindi using TTS
+        try { await playElevenLabs(data.answer_hi); } catch {}
+      } else if (data.error) {
+        setChatHistory([...newChatHistory, { type: "error", message: data.error }]);
+      }
+    } catch (error) {
+      console.error("Error asking Hindi question:", error);
+      setChatHistory([...newChatHistory, { type: "error", message: "Failed to get answer. Please try again." }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleChatSubmit = async (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
@@ -619,7 +707,7 @@ const PDFViewer = () => {
       // Stop any ongoing playback and clean old URL
       try { audioRef.current.pause(); } catch {}
       // In Podcast Mode, suspend mic while TTS plays to avoid feedback
-      if (isPodcastMode) {
+      if (isPodcastMode || isPodcastHindiMode) {
         ttsSuspendRef.current = true;
         try { await suspendPodcastVAD(); } catch {}
       }
@@ -634,7 +722,7 @@ const PDFViewer = () => {
       audioRef.current.src = url;
       // When playback ends, resume Podcast Mode if it was active
       audioRef.current.onended = async () => {
-        if (isPodcastMode && ttsSuspendRef.current) {
+        if ((isPodcastMode || isPodcastHindiMode) && ttsSuspendRef.current) {
           ttsSuspendRef.current = false;
           try { await startPodcastVAD(); } catch {}
         }
@@ -1231,6 +1319,15 @@ const PDFViewer = () => {
                   onClick={() => (isPodcastMode ? stopPodcastVAD() : startPodcastVAD())}
                 >
                   {isPodcastMode ? 'Podcast: On' : 'Podcast: Off'}
+                </button>
+
+                <button
+                  type="button"
+                  aria-label={isPodcastHindiMode ? "Disable Hindi Podcast" : "Enable Hindi Podcast"}
+                  className={`podcast-btn hindi ${isPodcastHindiMode ? 'enabled' : ''}`}
+                  onClick={() => (isPodcastHindiMode ? stopPodcastHindiVAD() : startPodcastHindiVAD())}
+                >
+                  {isPodcastHindiMode ? 'Podcast (हिंदी): On' : 'Podcast (हिंदी): Off'}
                 </button>
 
                 {isRecording && (
