@@ -7,12 +7,19 @@ const ResearchPapers = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     const storedResults = localStorage.getItem("searchResult");
+    const storedQuery = localStorage.getItem("lastSearchTerm");
     if (storedResults) {
       setResults(JSON.parse(storedResults));
+      if (storedQuery) {
+        // Ensure plain string, strip brackets/quotes if accidentally stored
+        const clean = String(storedQuery).replace(/^\[object Object\]$/i, '').replace(/^"|"$/g, '');
+        setQuery(clean);
+      }
     } else {
       navigate("/");
     }
@@ -73,7 +80,9 @@ const ResearchPapers = () => {
     <div className="research-container">
       <div className="research-header">
         <h1>Research Papers</h1>
-        <p>Found {results.length} papers matching your search</p>
+        <p>
+          Found {results.length} papers matching your search{query ? ` for "${query}"` : ""}
+        </p>
       </div>
 
       {loading && (

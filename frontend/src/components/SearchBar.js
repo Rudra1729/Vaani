@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Search, Loader2, Mic, MicOff, Square } from "lucide-react";
 import "./SearchBar.css";
 
-const SearchBar = () => {
+const SearchBar = ({ showMic = true }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -14,6 +14,7 @@ const SearchBar = () => {
   
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const currentMimeTypeRef = useRef(null);
 
   const handleInputChange = (event) => {
     setSearchTerm(event.target.value);
@@ -57,7 +58,19 @@ const SearchBar = () => {
       console.log("Search Response:", data);
 
       if (data.results && data.results.length > 0) {
-        localStorage.setItem("searchResult", JSON.stringify(data.results));
+        // Persist both results and the original search term for display on results page
+        try {
+          localStorage.setItem("searchResult", JSON.stringify(data.results));
+          let persistedRaw = (typeof data.user_prompt === 'string' && data.user_prompt.trim())
+            ? data.user_prompt.trim()
+            : queryToUse.trim();
+          if (typeof persistedRaw !== 'string') {
+            persistedRaw = (persistedRaw && typeof persistedRaw.text === 'string') ? persistedRaw.text : String(persistedRaw);
+          }
+          // Remove stray wrapping quotes if any
+          const persisted = persistedRaw.replace(/^"|"$/g, '');
+          localStorage.setItem("lastSearchTerm", persisted);
+        } catch {}
         navigate("/research");
       } else {
         setError("No papers found for your search. Try different keywords.");
@@ -70,29 +83,52 @@ const SearchBar = () => {
     }
   };
 
+  const getSupportedMimeType = () => {
+    const types = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/ogg",
+      "audio/mp4",
+      "audio/mpeg"
+    ];
+    for (const t of types) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) {
+        return t;
+      }
+    }
+    return "audio/webm";
+  };
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      const mimeType = getSupportedMimeType();
+      const options = mimeType ? { mimeType } : undefined;
+      currentMimeTypeRef.current = mimeType;
+      mediaRecorderRef.current = new MediaRecorder(stream, options);
       audioChunksRef.current = [];
 
       mediaRecorderRef.current.ondataavailable = (event) => {
-        console.log("Audio data received:", event.data.size, "bytes");
-        audioChunksRef.current.push(event.data);
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        console.log("Recording stopped, total chunks:", audioChunksRef.current.length);
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        console.log("Audio blob size:", audioBlob.size, "bytes");
-        await transcribeAudio(audioBlob);
-        stream.getTracks().forEach(track => track.stop());
+        try {
+          const usedType = currentMimeTypeRef.current || 'audio/webm';
+          const audioBlob = new Blob(audioChunksRef.current, { type: usedType });
+          await transcribeAudio(audioBlob, usedType);
+        } finally {
+          stream.getTracks().forEach(track => track.stop());
+        }
       };
 
       mediaRecorderRef.current.start();
       setIsRecording(true);
       setError("");
-      console.log("Recording started");
+      console.log("Recording started with:", mimeType);
     } catch (error) {
       console.error("Error starting recording:", error);
       setError("Failed to access microphone. Please check permissions.");
@@ -106,24 +142,41 @@ const SearchBar = () => {
     }
   };
 
-  const transcribeAudio = async (audioBlob) => {
+  const transcribeAudio = async (audioBlob, mimeType) => {
     setIsTranscribing(true);
     setError("");
 
     try {
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'recording.wav');
+      const mt = (mimeType || audioBlob?.type || '').toLowerCase();
+      const ext = mt.includes('webm') ? 'webm' : mt.includes('ogg') ? 'ogg' : mt.includes('mp4') ? 'm4a' : mt.includes('mpeg') ? 'mp3' : 'wav';
+      formData.append('audio', audioBlob, `recording.${ext}`);
+      formData.append('language', 'en');
 
       const response = await fetch("http://127.0.0.1:5001/transcribe", {
         method: "POST",
         body: formData,
       });
 
+      let data;
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Try to extract a meaningful server error message
+        try {
+          const maybeJson = await response.json();
+          const serverMsg = (maybeJson && (maybeJson.error || maybeJson.message)) || '';
+          throw new Error(serverMsg ? `${response.status} ${serverMsg}` : `HTTP ${response.status}`);
+        } catch (e) {
+          // If body isn't JSON, fall back to text
+          try {
+            const txt = await response.text();
+            throw new Error(txt ? `${response.status} ${txt}` : `HTTP ${response.status}`);
+          } catch {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        }
+      } else {
+        data = await response.json();
       }
-
-      const data = await response.json();
       console.log("Transcription response:", data);
       
       // Check if we have a valid transcription
@@ -169,18 +222,20 @@ const SearchBar = () => {
             disabled={isLoading || isTranscribing}
             className="search-input"
           />
-          <button
-            className={`mic-button ${isRecording ? 'recording' : ''}`}
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={isLoading || isTranscribing}
-            title={isRecording ? "Stop recording" : "Start voice recording"}
-          >
-            {isRecording ? (
-              <Square size={18} />
-            ) : (
-              <Mic size={18} />
-            )}
-          </button>
+          {showMic && (
+            <button
+              className={`mic-button ${isRecording ? 'recording' : ''}`}
+              onClick={isRecording ? stopRecording : startRecording}
+              disabled={isLoading || isTranscribing}
+              title={isRecording ? "Stop recording" : "Start voice recording"}
+            >
+              {isRecording ? (
+                <Square size={18} />
+              ) : (
+                <Mic size={18} />
+              )}
+            </button>
+          )}
         </div>
         <button 
           className="search-button" 

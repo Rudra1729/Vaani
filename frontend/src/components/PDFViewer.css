@@ -1,14 +1,14 @@
- .pdf-viewer-container {
+.pdf-viewer-container {
   display: grid;
   grid-template-columns: 2fr 1fr;
   height: 100vh;
-  background: #f8fafc;
+  background: #05060a;
 }
 
 .pdf-viewer-main {
   display: flex;
   flex-direction: column;
-  background: #f1f5f9;
+  background: #0b0d12;
   overflow: hidden;
 }
 
@@ -17,9 +17,9 @@
   justify-content: space-between;
   align-items: center;
   padding: 1rem 2rem;
-  background: white;
-  border-bottom: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: #0b0d12;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 .page-controls,
@@ -30,7 +30,7 @@
 }
 
 .control-btn {
-  background: #06b6d4;
+  background: #ff7a18;
   color: white;
   border: none;
   padding: 0.5rem 1rem;
@@ -44,7 +44,7 @@
 }
 
 .control-btn:hover:not(:disabled) {
-  background: #0891b2;
+  background: #ff8c3a;
   transform: translateY(-1px);
 }
 
@@ -57,7 +57,7 @@
 .page-info,
 .scale-info {
   font-weight: 600;
-  color: #374151;
+  color: #ffffff;
   min-width: 120px;
   text-align: center;
 }
@@ -72,30 +72,49 @@
 }
 
 .page-nav {
-  position: sticky;
-  top: 0;
-  display: flex;
+  position: fixed;                 /* keep visible while scrolling */
+  top: 88px;                       /* below header */
+  left: 24px;                      /* float on the left gutter */
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  background: rgba(255,255,255,0.9);
+  gap: 0.6rem;
+  background: rgba(10,12,18,0.92);
+  backdrop-filter: blur(8px) saturate(1.1);
   padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  z-index: 5;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+  z-index: 20;
 }
 
 .page-btn {
-  background: #06b6d4;
+  background: linear-gradient(135deg, #ff7a18, #ffb000);
   color: white;
   border: none;
-  padding: 0.4rem 0.6rem;
-  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
   cursor: pointer;
+  box-shadow: 0 10px 20px rgba(255, 122, 24, 0.25);
 }
 
 .page-info-small {
-  color: #374151;
-  font-weight: 600;
+  color: #ffffff;
+  font-weight: 700;
+  white-space: nowrap;             /* keep on one line */
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1024px) {
+  .page-nav { top: 76px; left: 12px; }
+}
+
+@media (max-width: 640px) {
+  .page-nav { top: 70px; left: 8px; padding: 0.4rem 0.6rem; }
+  .page-btn { width: 30px; height: 30px; }
 }
 
 .pdf-content {
@@ -103,13 +122,13 @@
 }
 
 .pdf-status {
-  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  background: linear-gradient(135deg, #ff7a18, #ffb000);
   color: white;
   padding: 1rem;
   border-radius: 8px;
   margin-bottom: 2rem;
   text-align: center;
-  box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3);
+  box-shadow: 0 4px 12px rgba(255, 122, 24, 0.3);
 }
 
 .pdf-status p {
@@ -249,14 +268,14 @@
   
   .progress-fill {
     height: 100%;
-    background: linear-gradient(135deg, #06b6d4, #0891b2);
+    background: linear-gradient(135deg, #ff7a18, #ffb000);
     border-radius: 4px;
     transition: width 0.3s ease;
   }
   
   .loading-spinner {
     animation: spin 1s linear infinite;
-    color: #06b6d4;
+    color: #ff7a18;
     margin-bottom: 1rem;
   }
   
@@ -281,7 +300,7 @@
   }
   
   .retry-btn {
-    background: #06b6d4;
+    background: #ff7a18;
     color: white;
     border: none;
     padding: 0.75rem 1.5rem;
@@ -293,20 +312,22 @@
   }
   
   .retry-btn:hover {
-    background: #0891b2;
+    background: #ff8c3a;
     transform: translateY(-1px);
   }
   
-  .pdf-sidebar {
-    display: flex;
-    flex-direction: column;
-    background: white;
-    border-left: 1px solid #e2e8f0;
-  }
+.pdf-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: #0b0d12;
+  border-left: 1px solid rgba(255,255,255,0.06);
+  box-shadow: -8px 0 22px rgba(0,0,0,0.35);
+}
   
   .sidebar-tabs {
     display: flex;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    background: #0b0d12;
   }
   
   .tab-btn {
@@ -316,24 +337,24 @@
     justify-content: center;
     gap: 0.5rem;
     padding: 1rem;
-    background: #f8fafc;
+    background: #0b0d12;
     border: none;
     border-bottom: 2px solid transparent;
     cursor: pointer;
-    font-weight: 500;
-    color: #6b7280;
+    font-weight: 600;
+    color: #c9cdd6;
     transition: all 0.2s ease-in-out;
   }
   
   .tab-btn.active {
-    background: white;
-    color: #06b6d4;
-    border-bottom-color: #06b6d4;
+    background: #11151f;
+    color: #ff7a18;
+    border-bottom-color: #ff7a18;
   }
   
   .tab-btn:hover:not(.active) {
-    background: #f1f5f9;
-    color: #374151;
+    background: #11151f;
+    color: #f5f5f5;
   }
   
   .tab-content {
@@ -405,16 +426,16 @@
   }
   
   .analysis-content {
-    background: white;
-    border: 1px solid #e2e8f0;
+    background: #0a0c12;
+    border: 1px solid rgba(255,255,255,0.06);
     border-radius: 8px;
     padding: 1.5rem;
     line-height: 1.6;
-    color: #374151;
+    color: #f5f5f5;
   }
   
   .analysis-content h4 {
-    color: #3b82f6;
+    color: #ffb000;
     margin: 1rem 0 0.5rem 0;
     font-size: 1rem;
   }
@@ -475,13 +496,15 @@
   }
   
   .chat-message.user {
-    background: #eff6ff;
-    border-left: 4px solid #3b82f6;
+    background: #0f1118;
+    border-left: 4px solid #ff7a18;
+    color: #f5f5f5;
   }
   
   .chat-message.bot {
-    background: #f0fdf4;
-    border-left: 4px solid #10b981;
+    background: #0b0d12;
+    border-left: 4px solid #ffb000;
+    color: #f5f5f5;
   }
   
   .chat-message.error {
@@ -501,16 +524,17 @@
     margin-right: 0.5rem;
   }
   
-  .chat-loading {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 1rem;
-    background: #f8fafc;
-    border-radius: 8px;
-    color: #6b7280;
-    font-style: italic;
-  }
+.chat-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: #0b0d12;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  color: #c9cdd6;
+  font-style: italic;
+}
   
   .chat-controls-row {
     display: flex;
@@ -526,9 +550,9 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    border: 1px solid #d1d5db;
-    background: #fff;
-    color: #374151;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: #0b0d12;
+    color: #f5f5f5;
     padding: 0.5rem 0.6rem;
     border-radius: 8px;
     cursor: pointer;
@@ -537,7 +561,7 @@
 
   .chat-mic-btn:hover,
   .chat-tts-btn:hover {
-    background: #f8fafc;
+    background: #11151f;
   }
 
   .chat-mic-btn.recording {
@@ -547,49 +571,49 @@
   }
 
   .chat-tts-btn.enabled {
-    border-color: #10b981;
-    background: #ecfdf5;
-    color: #065f46;
+    border-color: rgba(255,122,24,0.55);
+    background: linear-gradient(135deg, #ff7a18, #ffb000);
+    color: #0b0d12;
   }
 
   .chat-auto-btn.enabled {
-    border-color: #10b981;
-    background: #ecfdf5;
-    color: #065f46;
+    border-color: rgba(255,122,24,0.55);
+    background: linear-gradient(135deg, #ff7a18, #ffb000);
+    color: #0b0d12;
   }
 
-/* Podcast button premium styling */
+/* Podcast button - orange scheme */
 .podcast-btn {
-  border-color: #7c3aed;
-  background: linear-gradient(135deg, #ede9fe, #f5f3ff);
-  color: #4c1d95;
-  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.18), inset 0 1px 0 rgba(255,255,255,0.6);
+  border-color: rgba(255,122,24,0.45);
+  background: #0b0d12;
+  color: #f5f5f5;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 .podcast-btn:hover {
-  background: linear-gradient(135deg, #e9d5ff, #ede9fe);
+  background: #11151f;
 }
 .podcast-btn.enabled {
-  border-color: #7c3aed;
-  background: linear-gradient(135deg, #c4b5fd, #ddd6fe);
-  color: #3b0764;
-  animation: podcastGlow 1.6s ease-in-out infinite;
+  border-color: rgba(255,122,24,0.6);
+  background: linear-gradient(135deg, #ff7a18, #ffb000);
+  color: #0b0d12;
+  animation: none;
 }
 
-/* Hindi podcast variant */
+/* Hindi podcast variant aligned to orange */
 .podcast-btn.hindi {
-  border-color: #ea580c;
-  background: linear-gradient(135deg, #fff7ed, #ffedd5);
-  color: #7c2d12;
-  box-shadow: 0 6px 20px rgba(234, 88, 12, 0.14), inset 0 1px 0 rgba(255,255,255,0.6);
+  border-color: rgba(255,122,24,0.45);
+  background: #0b0d12;
+  color: #f5f5f5;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 .podcast-btn.hindi:hover {
-  background: linear-gradient(135deg, #ffedd5, #fed7aa);
+  background: #11151f;
 }
 .podcast-btn.hindi.enabled {
-  border-color: #ea580c;
-  background: linear-gradient(135deg, #fdba74, #fed7aa);
-  color: #7c2d12;
-  animation: podcastGlowHindi 1.6s ease-in-out infinite;
+  border-color: rgba(255,122,24,0.6);
+  background: linear-gradient(135deg, #ff7a18, #ffb000);
+  color: #0b0d12;
+  animation: none;
 }
 
 @keyframes podcastGlowHindi {
@@ -655,7 +679,7 @@
   }
 
   .chat-input-form {
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid rgba(255,255,255,0.06);
     padding: 1rem 0;
     margin-top: 260px;
   }
@@ -669,23 +693,23 @@
 
   .wake-label {
     font-size: 0.8rem;
-    color: #6b7280;
+    color: #c9cdd6;
   }
 
   .wake-select-input {
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(255,255,255,0.1);
     border-radius: 6px;
     padding: 0.4rem 0.5rem;
-    background: #fff;
-    color: #374151;
+    background: #0b0d12;
+    color: #f5f5f5;
   }
 
   .wake-custom-input {
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(255,255,255,0.1);
     border-radius: 6px;
     padding: 0.4rem 0.5rem;
-    background: #fff;
-    color: #374151;
+    background: #0b0d12;
+    color: #f5f5f5;
   }
   
   .chat-input-wrapper {
@@ -696,24 +720,26 @@
   .chat-input {
     flex: 1;
     padding: 0.75rem 1rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid rgba(255,255,255,0.1);
     border-radius: 8px;
     font-size: 0.9rem;
     transition: all 0.2s ease-in-out;
+    background: #0b0d12;
+    color: #f5f5f5;
   }
   
   .chat-input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    border-color: #ff7a18;
+    box-shadow: 0 0 0 3px rgba(255, 122, 24, 0.15);
   }
   
   .chat-input:disabled {
-    background: #f9fafb;
+    background: #0f1118;
     cursor: not-allowed;
   }
   
   .chat-send-btn {
-    background: #3b82f6;
+    background: linear-gradient(135deg, #ff7a18, #ffb000);
     color: white;
     border: none;
     padding: 0.75rem;
@@ -726,7 +752,7 @@
   }
   
   .chat-send-btn:hover:not(:disabled) {
-    background: #1d4ed8;
+    background: linear-gradient(135deg, #ff8c3a, #ffc233);
     transform: translateY(-1px);
   }
   

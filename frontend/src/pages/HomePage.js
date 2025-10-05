@@ -6,8 +6,9 @@ import "./HomePage.css";
 const HomePage = () => (
   <div className="homepage">
     <div className="hero-section">
+      <div className="mesh-bg" aria-hidden="true" />
       <h1 className="hero-title">
-        Research<span className="blue-text">AI</span>
+        Vaani
       </h1>
       <p className="hero-subtitle">
         Discover, analyze, and understand research papers with the power of AI. 
@@ -30,11 +31,11 @@ const HomePage = () => (
     </div>
     
     <div className="search-section">
-      <SearchBar />
+      <SearchBar showMic={false} />
     </div>
     
     <div className="features-section">
-      <h2 className="section-title">Why Choose ResearchAI?</h2>
+      <h2 className="section-title">Why Choose Vaani?</h2>
       <FeatureCards />
     </div>
   </div>
