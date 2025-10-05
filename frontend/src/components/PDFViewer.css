@@ -71,6 +71,33 @@
   align-items: flex-start;
 }
 
+.page-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255,255,255,0.9);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  z-index: 5;
+}
+
+.page-btn {
+  background: #06b6d4;
+  color: white;
+  border: none;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.page-info-small {
+  color: #374151;
+  font-weight: 600;
+}
+
 .pdf-content {
   width: 100%;
 }
@@ -125,9 +152,57 @@
     pointer-events: all;
     cursor: text;
   }
+
+  /* Precise snippet highlight */
+  .textLayer .pdf-highlight {
+    background: rgba(255, 230, 0, 0.45);
+    box-shadow: 0 0 0 1px rgba(255, 200, 0, 0.8) inset;
+    border-radius: 2px;
+  }
   
   canvas {
     display: block;
+  }
+
+  .snippet-flash {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(16,185,129,0.12);
+    pointer-events: none;
+    animation: flashOut 1.2s ease forwards;
+  }
+
+  @keyframes flashOut {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  /* Bounding box overlay for precise region */
+  .box-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .pdf-box {
+    position: absolute;
+    border: 2px solid rgba(234, 179, 8, 0.95);
+    background: rgba(250, 204, 21, 0.15);
+    border-radius: 4px;
+    box-shadow: 0 0 0 1px rgba(234, 179, 8, 0.4) inset;
+    animation: boxFlash 180ms ease-in;
+  }
+
+  @keyframes boxFlash {
+    from { transform: scale(0.98); opacity: 0.8; }
+    to { transform: scale(1); opacity: 1; }
   }
   
   .pdf-loading {
@@ -444,9 +519,10 @@
     padding: 0.25rem 0.25rem 0.5rem 0.25rem;
   }
 
-  .chat-mic-btn,
-  .chat-tts-btn,
-  .chat-auto-btn {
+.chat-mic-btn,
+.chat-tts-btn,
+.chat-auto-btn,
+.podcast-btn {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -481,6 +557,50 @@
     background: #ecfdf5;
     color: #065f46;
   }
+
+/* Podcast button premium styling */
+.podcast-btn {
+  border-color: #7c3aed;
+  background: linear-gradient(135deg, #ede9fe, #f5f3ff);
+  color: #4c1d95;
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.18), inset 0 1px 0 rgba(255,255,255,0.6);
+}
+.podcast-btn:hover {
+  background: linear-gradient(135deg, #e9d5ff, #ede9fe);
+}
+.podcast-btn.enabled {
+  border-color: #7c3aed;
+  background: linear-gradient(135deg, #c4b5fd, #ddd6fe);
+  color: #3b0764;
+  animation: podcastGlow 1.6s ease-in-out infinite;
+}
+
+/* Hindi podcast variant */
+.podcast-btn.hindi {
+  border-color: #ea580c;
+  background: linear-gradient(135deg, #fff7ed, #ffedd5);
+  color: #7c2d12;
+  box-shadow: 0 6px 20px rgba(234, 88, 12, 0.14), inset 0 1px 0 rgba(255,255,255,0.6);
+}
+.podcast-btn.hindi:hover {
+  background: linear-gradient(135deg, #ffedd5, #fed7aa);
+}
+.podcast-btn.hindi.enabled {
+  border-color: #ea580c;
+  background: linear-gradient(135deg, #fdba74, #fed7aa);
+  color: #7c2d12;
+  animation: podcastGlowHindi 1.6s ease-in-out infinite;
+}
+
+@keyframes podcastGlowHindi {
+  0%, 100% { box-shadow: 0 6px 20px rgba(234, 88, 12, 0.24), 0 0 0 0 rgba(234,88,12,0.22); }
+  50% { box-shadow: 0 10px 28px rgba(234, 88, 12, 0.36), 0 0 0 6px rgba(234,88,12,0.10); }
+}
+
+@keyframes podcastGlow {
+  0%, 100% { box-shadow: 0 6px 20px rgba(124, 58, 237, 0.22), 0 0 0 0 rgba(124,58,237,0.25); }
+  50% { box-shadow: 0 10px 28px rgba(124, 58, 237, 0.35), 0 0 0 6px rgba(124,58,237,0.10); }
+}
 
   .tts-label {
     font-size: 0.8rem;
@@ -523,6 +643,11 @@
     display: inline-block;
     animation: pulse 1s ease-in-out infinite;
   }
+
+/* Secondary recording indicator (green) */
+.listening-indicator[style*="10b981"] .dot {
+  background: #10b981 !important;
+}
 
   @keyframes pulse {
     0%, 100% { opacity: 0.4; transform: scale(0.9); }

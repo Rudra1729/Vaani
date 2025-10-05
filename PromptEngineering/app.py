@@ -89,7 +89,11 @@ def ask_question():
 
     try:
         answer = chat_with_doc(question)
-        return jsonify(answer=answer)
+        # Support both legacy string and new dict reply with page number
+        if isinstance(answer, dict):
+            return jsonify(answer=answer.get("text"), page=answer.get("page"), snippet=answer.get("snippet"), anchors=answer.get("anchors"))
+        else:
+            return jsonify(answer=answer, page=None)
     except Exception as e:
         return jsonify(error=str(e)), 500
 
