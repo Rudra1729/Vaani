@@ -371,8 +371,8 @@ const PDFViewer = () => {
 
   const formatAnalysis = (text) => {
     return text
-      .replace(/\*\*Operational Context\*\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Operational Context</h4>')
-      .replace(/\*\*Other Use-cases\*\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Other Use-cases</h4>');
+      .replace(/\\*Operational Context\\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Operational Context</h4>')
+      .replace(/\\*Other Use-cases\\*/g, '<h4 style="margin:10px 0;color:#06b6d4">Other Use-cases</h4>');
   };
 
   // Initialize audio element for ElevenLabs playback
@@ -426,7 +426,7 @@ const PDFViewer = () => {
   // ─── Always-On Wake Word Listening ("hey vani" / "hey vaani") ───────────────
   const [autoListenEnabled, setAutoListenEnabled] = useState(false);
   const wakeStateRef = useRef({ wakeDetected: false, buffer: "", lastHeardAt: 0 });
-  const [wakePreset, setWakePreset] = useState("hey vaani"); 
+  const [wakePreset, setWakePreset] = useState("hi there"); 
   const [customWake, setCustomWake] = useState("");
 
   const supportsSpeechRecognition = () => {
@@ -489,7 +489,7 @@ const PDFViewer = () => {
     if (wakePreset === 'hi there') presets.push('hi there', 'hi there', 'hey there');
     if (wakePreset === 'custom' && customWake.trim()) presets.push(customWake.trim());
     // Fallback to default if empty
-    if (presets.length === 0) presets.push('hey vaani');
+    if (presets.length === 0) presets.push('hi there');
     return presets.map(phraseToRegex);
   };
 
@@ -501,7 +501,7 @@ const PDFViewer = () => {
     if (wakePreset === 'hey research') phrases.push('hey research');
     if (wakePreset === 'hi there') phrases.push('hi there', 'hey there');
     if (wakePreset === 'custom' && customWake.trim()) phrases.push(customWake.trim());
-    if (phrases.length === 0) phrases.push('hey vaani');
+    if (phrases.length === 0) phrases.push('hi there');
     return phrases.map(p => normalize(p));
   };
 
@@ -516,7 +516,8 @@ const PDFViewer = () => {
     recognition.lang = 'en-US';
     recognition.continuous = true;
     recognition.interimResults = true;
-    try { recognition.maxAlternatives = 1; } catch {}
+    recognition.maxAlternatives = 3; // Get multiple alternatives for better accuracy
+    try { recognition.serviceURI = 'wss://www.google.com/speech-api/v2/recognize'; } catch {}
 
     const scheduleSilenceSubmit = (delayMs) => {
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -647,7 +648,7 @@ const PDFViewer = () => {
       let transcript = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const res = event.results[i];
-        // Ensure a space between segments so word boundary matching is more reliable
+        // Use the best alternative (first one) for better accuracy, same as phrase detection
         transcript += (res[0].transcript + ' ');
       }
       const lower = normalize(transcript);
