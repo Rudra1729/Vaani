@@ -769,12 +769,20 @@
       grid-template-rows: 1fr auto;
     }
     
-    .pdf-sidebar {
-      max-height: 50vh;
-      border-left: none;
-      border-top: 1px solid #e2e8f0;
-    }
+  .pdf-sidebar {
+    max-height: 50vh;
+    border-left: none;
+    border-top: 1px solid #e2e8f0;
   }
+}
+
+/* Mind map tab styles */
+.mindmap-tab {
+  height: 100%;
+  overflow: hidden;
+  background: #f8fafc;
+  border-radius: 0.5rem;
+}
   
   @media (max-width: 768px) {
     .pdf-controls {
