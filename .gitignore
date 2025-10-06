@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Credentials (keep these out of git)
+PromptEngineering/API_KEY.py
+PromptEngineering/*.json
+.env
+.env.*
+*.env
+
+# Node / frontend
+frontend/node_modules/
+frontend/.env
+frontend/.env.*
+
+
