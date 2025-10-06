@@ -11,7 +11,7 @@ export const translations = {
     'lang.continue': 'Continue',
 
     // HomePage
-    'home.title': 'Vaani',
+    'home.title': 'Vaani ',
     'home.subtitle': 'Discover, analyze, and understand research papers with the power of AI. Enter a topic or question to find relevant academic papers and get instant insights.',
     'home.stats.papers': 'Papers',
     'home.stats.analysis': 'Analysis',
@@ -71,7 +71,7 @@ export const translations = {
   },
   hi: {
     // Global
-    'app.back': 'वापस',
+    'app.back': 'वापस ',
     'nav.search': 'खोज',
     'nav.papers': 'पेपर',
     'lang.english': 'अंग्रेज़ी',

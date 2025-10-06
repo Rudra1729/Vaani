@@ -23,7 +23,7 @@ const MindMap = ({ pdfUrl }) => {
     
     try {
       // First check if PDF is loaded
-      const testResponse = await fetch("http://127.0.0.1:5001/test-mindmap");
+      const testResponse = await fetch("https://vani-backend-311709302102.europe-west1.run.app/test-mindmap");
       const testData = await testResponse.json();
       
       if (!testData.pdf_exists) {
@@ -33,7 +33,7 @@ const MindMap = ({ pdfUrl }) => {
       
       console.log("PDF status:", testData);
       
-      const response = await fetch("http://127.0.0.1:5001/generate-mindmap", {
+      const response = await fetch("https://vani-backend-311709302102.europe-west1.run.app/generate-mindmap", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -382,7 +382,7 @@ const MindMap = ({ pdfUrl }) => {
           <button
             onClick={async () => {
               try {
-                const response = await fetch("http://127.0.0.1:5001/test-mindmap");
+                const response = await fetch("https://vani-backend-311709302102.europe-west1.run.app/test-mindmap");
                 const data = await response.json();
                 console.log("Debug info:", data);
                 alert(`PDF Status: ${data.pdf_exists ? 'Loaded' : 'Not loaded'}\nPath: ${data.pdf_path || 'None'}`);

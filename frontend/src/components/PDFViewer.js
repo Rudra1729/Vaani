@@ -55,6 +55,7 @@ const PDFViewer = () => {
   const [vadSilenceMs, setVadSilenceMs] = useState(3500);
   const vadSpeechStartRef = useRef(0);
   const ttsSuspendRef = useRef(false);
+  const isTtsPlayingRef = useRef(false);
   const podcastModeRef = useRef(false);
   const podcastHindiModeRef = useRef(false);
   const vadRmsEmaRef = useRef(0);
@@ -66,7 +67,7 @@ const PDFViewer = () => {
 
   const { t, language } = useLanguage();
   // PDF URL from backend
-  const pdfUrl = "http://127.0.0.1:5001/pdf";
+  const pdfUrl = "https://vani-backend-311709302102.europe-west1.run.app/pdf";
   const pageNumberToDivRef = useRef(new Map());
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -110,7 +111,7 @@ const PDFViewer = () => {
 
         // First check if backend is responding
         try {
-          const healthCheck = await fetch("http://127.0.0.1:5001/pdf", { method: "HEAD" });
+          const healthCheck = await fetch("https://vani-backend-311709302102.europe-west1.run.app/pdf", { method: "HEAD" });
           if (healthCheck.status === 202) {
             setError("Backend is still loading the PDF. Please wait a moment and refresh the page.");
             return;
@@ -256,7 +257,7 @@ const PDFViewer = () => {
     try { sendSelectionForMindmap(text); } catch {}
 
     try {
-      const response = await fetch("http://127.0.0.1:5001/process-selection", {
+      const response = await fetch("https://vani-backend-311709302102.europe-west1.run.app/process-selection", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -282,7 +283,7 @@ const PDFViewer = () => {
     try {
       setMindmapLoading(true);
       setMindmapError("");
-      const res = await fetch("http://127.0.0.1:5001/mindmap", {
+      const res = await fetch("https://vani-backend-311709302102.europe-west1.run.app/mindmap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
@@ -443,7 +444,7 @@ document.getElementById('fs').onclick = () => {
       try {
         setMindmapLoading(true);
         setMindmapError("");
-        const res = await fetch("http://127.0.0.1:5001/mindmap", {
+        const res = await fetch("https://vani-backend-311709302102.europe-west1.run.app/mindmap", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ scope: 'document' })
@@ -547,7 +548,7 @@ document.getElementById('fs').onclick = () => {
       form.append("audio", blob, `recording.${ext}`);
       form.append("language", "en");
 
-      const res = await fetch("http://127.0.0.1:5001/transcribe", {
+      const res = await fetch("https://vani-backend-311709302102.europe-west1.run.app/transcribe", {
         method: "POST",
         body: form,
       });
@@ -578,7 +579,7 @@ document.getElementById('fs').onclick = () => {
       form.append("language", "hi");
       form.append("engine", "google");
 
-      const res = await fetch("http://127.0.0.1:5001/transcribe", {
+      const res = await fetch("https://vani-backend-311709302102.europe-west1.run.app/transcribe", {
         method: "POST",
         body: form,
       });
@@ -684,6 +685,11 @@ document.getElementById('fs').onclick = () => {
       const loop = () => {
         // Run while either English or Hindi podcast mode is active
         if (!(podcastModeRef.current || podcastHindiModeRef.current) || !vadAnalyserRef.current) return;
+        // If TTS is currently speaking, skip VAD processing entirely
+        if (isTtsPlayingRef.current) {
+          vadRAFRef.current = requestAnimationFrame(loop);
+          return;
+        }
         try {
           vadAnalyserRef.current.getFloatTimeDomainData(vadDataArrayRef.current);
           const rms = computeRms(vadDataArrayRef.current);
@@ -704,8 +710,8 @@ document.getElementById('fs').onclick = () => {
               vadHadSpeechRef.current = true;
               vadSpeechStartRef.current = now;
               vadSilenceStartRef.current = 0;
-              // Start an utterance recorder if not already
-              if (!isPostWakeRecording) startUtteranceRecording(postWakeStreamRef.current);
+              // Start an utterance recorder if not already, and only if TTS is not speaking
+              if (!isPostWakeRecording && !isTtsPlayingRef.current) startUtteranceRecording(postWakeStreamRef.current);
               }
             }
           } else {
@@ -850,7 +856,7 @@ document.getElementById('fs').onclick = () => {
 
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:5001/ask", {
+      const response = await fetch("https://vani-backend-311709302102.europe-west1.run.app/ask", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -911,7 +917,7 @@ document.getElementById('fs').onclick = () => {
 
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:5001/ask-hindi", {
+      const response = await fetch("https://vani-backend-311709302102.europe-west1.run.app/ask-hindi", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1002,6 +1008,7 @@ document.getElementById('fs').onclick = () => {
       // In Podcast Mode, suspend mic while TTS plays to avoid feedback
       if (isPodcastMode || isPodcastHindiMode) {
         ttsSuspendRef.current = true;
+        isTtsPlayingRef.current = true;
         try { await suspendPodcastVAD(); } catch {}
       }
       if (currentAudioUrlRef.current) {
@@ -1010,13 +1017,14 @@ document.getElementById('fs').onclick = () => {
       }
 
       // Stream via GET to allow faster start (browser can stream progressively)
-      const url = `http://127.0.0.1:5001/tts?` + new URLSearchParams({ text });
+      const url = `https://vani-backend-311709302102.europe-west1.run.app/tts?` + new URLSearchParams({ text });
       // Set src directly for progressive playback
       audioRef.current.src = url;
       // When playback ends, resume Podcast Mode if it was active
       audioRef.current.onended = async () => {
         if ((podcastModeRef.current || podcastHindiModeRef.current) && ttsSuspendRef.current) {
           ttsSuspendRef.current = false;
+          isTtsPlayingRef.current = false;
           try {
             if (podcastHindiModeRef.current) {
               await startPodcastHindiVAD();
@@ -1025,9 +1033,12 @@ document.getElementById('fs').onclick = () => {
             }
           } catch {}
         } else if (language === 'hi' && autoHindiContinuous) {
+          isTtsPlayingRef.current = false;
           try { await startPodcastHindiVAD(); } catch {}
         }
       };
+      audioRef.current.onplay = () => { isTtsPlayingRef.current = true; };
+      audioRef.current.onpause = () => { isTtsPlayingRef.current = false; };
       await audioRef.current.play().catch(() => {});
     } catch (e) {
       console.error("Failed to play ElevenLabs TTS:", e);
@@ -1540,8 +1551,8 @@ document.getElementById('fs').onclick = () => {
                 )}
                 {graphData && !mindmapLoading && (
                   <div>
-                    <div style={{ marginBottom: '1rem', padding: '0.5rem', background: '#f8fafc', borderRadius: '4px', borderLeft: '3px solid #10b981' }}>
-                      <strong>Graph View</strong>
+                    <div style={{ marginBottom: '1rem', padding: '0.5rem', background: '#0b0d12', color: '#f5f5f5', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <strong style={{ color: '#ffffff' }}>Graph View</strong>
                     </div>
                     <iframe
                       title="Graph View"

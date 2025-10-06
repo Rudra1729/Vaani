@@ -33,7 +33,7 @@ const ResearchPapers = () => {
 
     try {
       // Step 1: Log the click
-      await fetch("http://127.0.0.1:5001/log-click", {
+      await fetch("https://vani-backend-311709302102.europe-west1.run.app/log-click", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -42,7 +42,7 @@ const ResearchPapers = () => {
       });
 
       // Step 2: Update PDF and reload model
-      const updateResponse = await fetch("http://127.0.0.1:5001/update-pdf", {
+      const updateResponse = await fetch("https://vani-backend-311709302102.europe-west1.run.app/update-pdf", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -202,7 +202,7 @@ export default ResearchPapers;
 
 //     try {
 //       // Step 1: Log the click
-//       await fetch("http://127.0.0.1:5001/log-click", {
+//       await fetch("https://vani-backend-311709302102.europe-west1.run.app/log-click", {
 //         method: "POST",
 //         headers: {
 //           "Content-Type": "application/json",
@@ -211,7 +211,7 @@ export default ResearchPapers;
 //       });
 
 //       // Step 2: Update PDF and reload model
-//       const updateResponse = await fetch("http://127.0.0.1:5001/update-pdf", {
+//       const updateResponse = await fetch("https://vani-backend-311709302102.europe-west1.run.app/update-pdf", {
 //         method: "POST",
 //         headers: {
 //           "Content-Type": "application/json",

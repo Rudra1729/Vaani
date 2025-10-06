@@ -8,7 +8,7 @@ import requests
 import json
 
 def test_mindmap_api():
-    base_url = "http://127.0.0.1:5001"
+    base_url = "https://vani-backend-311709302102.europe-west1.run.app"
     
     print("🧠 Testing Mind Map API...")
     

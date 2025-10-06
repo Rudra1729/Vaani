@@ -48,7 +48,7 @@ const SearchBar = ({ showMic = true }) => {
     setError("");
 
     try {
-      const response = await fetch("http://127.0.0.1:5001/search", {
+      const response = await fetch("https://vani-backend-311709302102.europe-west1.run.app/search", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -155,7 +155,7 @@ const SearchBar = ({ showMic = true }) => {
       formData.append('audio', audioBlob, `recording.${ext}`);
       formData.append('language', 'en');
 
-      const response = await fetch("http://127.0.0.1:5001/transcribe", {
+      const response = await fetch("https://vani-backend-311709302102.europe-west1.run.app/transcribe", {
         method: "POST",
         body: formData,
       });

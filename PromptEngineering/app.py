@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from flask import (
     Flask, render_template_string, jsonify, request,
-    abort, url_for, send_file, Response
+    abort, url_for, send_file, Response, make_response
 )
 from flask_cors import CORS, cross_origin
 from pdf_utils import cleanup_old_pdfs
@@ -20,6 +20,10 @@ from pdf_utils import cleanup_old_pdfs
 import fitz  # PyMuPDF
 from elevenlabs import ElevenLabs
 import google.generativeai as genai
+try:
+    from google.cloud import speech as google_speech
+except Exception:
+    google_speech = None
 
 def extract_pdf_text(pdf_path):
     """Extract all text content from a PDF file"""
@@ -46,10 +50,35 @@ from werkzeug.utils import secure_filename
 
 # ─── Flask Setup ───────────────────────────────────────────────────────────────
 app = Flask(__name__)
-# allow your React front-end on localhost:3000 (and any same‐origin calls)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:3000", "*"]}},
-     supports_credentials=True)
+# Permissive CORS for Cloud Run + local dev (no credentials with wildcard)
+CORS(app, resources={r"/*": {"origins": ["http://localhost:3000", "*"]}}, supports_credentials=False)
 logging.basicConfig(level=logging.INFO)
+
+# Ensure preflight (OPTIONS) succeeds and attach CORS headers consistently
+@app.before_request
+def _handle_preflight():
+    if request.method == 'OPTIONS':
+        resp = make_response('', 204)
+        resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+        resp.headers['Vary'] = 'Origin'
+        resp.headers['Access-Control-Allow-Headers'] = request.headers.get(
+            'Access-Control-Request-Headers', 'Content-Type, Authorization'
+        )
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        return resp
+
+
+@app.after_request
+def _add_cors_headers(resp):
+    try:
+        origin = request.headers.get('Origin', '*')
+        resp.headers.setdefault('Access-Control-Allow-Origin', origin)
+        resp.headers.setdefault('Vary', 'Origin')
+        resp.headers.setdefault('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        resp.headers.setdefault('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    except Exception:
+        pass
+    return resp
 
 def start_cleanup_thread(interval=30, max_age=60):
     def run_cleanup():
@@ -176,7 +205,7 @@ def health_check():
 # ─── Mind Map Generation Route ────────────────────────────────────────────────
 @app.route('/mindmap', methods=['POST'])
 @cross_origin()
-def generate_mindmap():
+def generate_mindmap_route():
     try:
         data = request.get_json(silent=True) or {}
         scope = (data.get('scope') or 'selection').strip().lower()
@@ -335,6 +364,7 @@ def transcribe_audio():
 
         # Optional language parameter (e.g., 'en', 'hi')
         language = (request.form.get('language') or request.args.get('language') or 'en').strip()
+        engine = (request.form.get('engine') or request.args.get('engine') or '').strip().lower()
         if not language:
             language = 'en'
         
@@ -351,48 +381,106 @@ def transcribe_audio():
             temp_audio_path = temp_file.name
         
         try:
-            # Initialize ElevenLabs client
-            client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
-            
-            # Transcribe audio using ElevenLabs Speech-to-Text API
-            with open(temp_audio_path, 'rb') as audio_data:
-                # For Hindi, prefer multilingual model if supported
-                stt_model = "scribe_v1"
-                transcription = client.speech_to_text.convert(
-                    model_id=stt_model,
-                    file=audio_data,
-                    language_code=language,
-                    diarize=False,
-                    timestamps_granularity="word"
+            use_google = (engine == 'google') or language.lower().startswith('hi')
+            if use_google and google_speech is not None:
+                # Google Cloud Speech-to-Text for Hindi
+                with open(temp_audio_path, 'rb') as f:
+                    content = f.read()
+                ext = (os.path.splitext(temp_audio_path)[1] or '').lower()
+                if ext == '.webm':
+                    encoding = google_speech.RecognitionConfig.AudioEncoding.WEBM_OPUS
+                elif ext == '.ogg':
+                    encoding = google_speech.RecognitionConfig.AudioEncoding.OGG_OPUS
+                elif ext == '.mp3':
+                    encoding = google_speech.RecognitionConfig.AudioEncoding.MP3
+                else:
+                    encoding = google_speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED
+
+                client = google_speech.SpeechClient()
+                audio  = google_speech.RecognitionAudio(content=content)
+                base_config = dict(
+                    encoding=encoding,
+                    language_code='hi-IN',
+                    alternative_language_codes=['hi','en-IN'],
+                    enable_automatic_punctuation=True,
+                    audio_channel_count=1
                 )
-            
-            # Extract text from transcription
-            transcribed_text = transcription.text if hasattr(transcription, 'text') else str(transcription)
-            
-            # Clean up the transcribed text
-            if transcribed_text:
-                transcribed_text = transcribed_text.strip()
-            
-            logging.info(f"Transcription successful: '{transcribed_text}'")
-            
-            # Check if transcription is empty or too short
-            if not transcribed_text or len(transcribed_text) < 2:
+                config = google_speech.RecognitionConfig(**base_config)
+                response = client.recognize(config=config, audio=audio)
+                text_parts = []
+                conf_vals = []
+                for result in response.results:
+                    if result.alternatives:
+                        text_parts.append((result.alternatives[0].transcript or '').strip())
+                        try:
+                            conf_vals.append(float(getattr(result.alternatives[0], 'confidence', 1.0)))
+                        except Exception:
+                            pass
+                transcribed_text = ' '.join([t for t in text_parts if t])
+                confidence = float(sum(conf_vals)/len(conf_vals)) if conf_vals else 1.0
+                if not transcribed_text:
+                    # Fallback attempt with simplified config
+                    fallback_cfg = google_speech.RecognitionConfig(
+                        encoding=google_speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED,
+                        language_code='hi',
+                        enable_automatic_punctuation=True
+                    )
+                    try:
+                        response2 = client.recognize(config=fallback_cfg, audio=audio)
+                        text_parts2 = []
+                        conf_vals2 = []
+                        for result in response2.results:
+                            if result.alternatives:
+                                text_parts2.append((result.alternatives[0].transcript or '').strip())
+                                try:
+                                    conf_vals2.append(float(getattr(result.alternatives[0], 'confidence', 1.0)))
+                                except Exception:
+                                    pass
+                        transcribed_text = ' '.join([t for t in text_parts2 if t])
+                        confidence = float(sum(conf_vals2)/len(conf_vals2)) if conf_vals2 else confidence
+                    except Exception as ge:
+                        logging.error(f"Google STT fallback failed: {ge}")
+
+                if not transcribed_text:
+                    return jsonify({
+                        "error": "No clear speech detected. Please try again.",
+                        "text": "",
+                        "language": 'hi-IN',
+                        "confidence": confidence
+                    }), 200
                 return jsonify({
-                    "error": "No clear speech detected. Please try speaking more clearly.",
-                    "text": "",
-                    "language": getattr(transcription, 'language_code', 'en'),
-                    "confidence": getattr(transcription, 'language_probability', 0.0)
+                    "text": transcribed_text,
+                    "language": 'hi-IN',
+                    "confidence": confidence
                 }), 200
-            
-            return jsonify({
-                "text": transcribed_text,
-                "language": getattr(transcription, 'language_code', language or 'en'),
-                "confidence": getattr(transcription, 'language_probability', 1.0)
-            }), 200
-            
-        except Exception as e:
-            logging.error(f"ElevenLabs API error: {e}")
-            return jsonify(error=f"Transcription failed: {str(e)}"), 500
+            else:
+                # ElevenLabs default
+                client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+                with open(temp_audio_path, 'rb') as audio_data:
+                    stt_model = "scribe_v1"
+                    transcription = client.speech_to_text.convert(
+                        model_id=stt_model,
+                        file=audio_data,
+                        language_code=language,
+                        diarize=False,
+                        timestamps_granularity="word"
+                    )
+                transcribed_text = transcription.text if hasattr(transcription, 'text') else str(transcription)
+                if transcribed_text:
+                    transcribed_text = transcribed_text.strip()
+                logging.info(f"Transcription successful: '{transcribed_text}'")
+                if not transcribed_text or len(transcribed_text) < 2:
+                    return jsonify({
+                        "error": "No clear speech detected. Please try speaking more clearly.",
+                        "text": "",
+                        "language": getattr(transcription, 'language_code', language or 'en'),
+                        "confidence": getattr(transcription, 'language_probability', 0.0)
+                    }), 200
+                return jsonify({
+                    "text": transcribed_text,
+                    "language": getattr(transcription, 'language_code', language or 'en'),
+                    "confidence": getattr(transcription, 'language_probability', 1.0)
+                }), 200
             
         finally:
             # Clean up temporary file
@@ -512,7 +600,7 @@ def synthesize_tts():
 
 @app.route("/generate-mindmap", methods=["POST"])
 @cross_origin()
-def generate_mindmap():
+def generate_mindmap_json():
     """Generate a mind map structure from the research paper"""
     try:
         data = request.get_json(silent=True) or {}
